@@ -1,0 +1,144 @@
+{
+  "name": "CoChalet Copy Source Matrix",
+  "version": "2.0",
+  "updated": "2026-04-08",
+  "description": "V10 content pillar definitions for Gemini Studio. Each source provides raw material, tone guidance, platform targets, and post concepts for content generation agents.",
+  "sources": [
+    {
+      "id": "deep-worker-core",
+      "name": "Deep Worker Value Proposition",
+      "weight": 0.25,
+      "pillar": "DW Core",
+      "rawMaterial": [
+        "Remote professionals spending $3-5K/month on coworking + short-term rentals",
+        "Deep Work philosophy: uninterrupted focus blocks produce 4x output",
+        "Starlink + ergonomic setup + mountain air = productivity compound effect",
+        "ADR $771 — premium positioning justified by productivity ROI",
+        "Flip Point at 45% occupancy — works even at half capacity"
+      ],
+      "tone": "Peer-to-peer. One builder talking to another. No corporate speak.",
+      "platforms": ["linkedin", "twitter", "youtube"],
+      "postConcepts": [
+        "The $5K/month trap — what remote workers actually spend on 'freedom'",
+        "Deep Work at 1,200 feet — why altitude changes output",
+        "Your office has a ceiling. Your retreat has a summit.",
+        "45% occupancy. That's all it takes. The math behind the Flip Point.",
+        "Starlink + standing desk + zero commute = the productivity stack nobody talks about"
+      ]
+    },
+    {
+      "id": "premium-casual-core",
+      "name": "Premium Casual Lifestyle",
+      "weight": 0.20,
+      "pillar": "PC Core",
+      "rawMaterial": [
+        "Families tired of Airbnb roulette — different place, same disappointment",
+        "Lost $120K over 3 years on Airbnb with zero ownership",
+        "Arrivez et vivez — arrive and live, no setup tax",
+        "Your chalet. Your week. Your mountain. Every year.",
+        "Deeded co-ownership: your name on the title, not a membership card"
+      ],
+      "tone": "Aspirational but grounded. Show the dream, anchor in reality. Montrer le reve.",
+      "platforms": ["instagram", "facebook", "pinterest"],
+      "postConcepts": [
+        "You've rented the dream 47 times. Maybe it's time to own a piece.",
+        "$120K spent. Zero equity earned. The Airbnb trap is real.",
+        "Arrivez et vivez — your chalet remembers you",
+        "Same mountain. Same fireplace. Your kids' heights on the doorframe.",
+        "Not a hotel. Not a rental. Yours."
+      ]
+    },
+    {
+      "id": "investor-transparency",
+      "name": "Investor Transparency Layer",
+      "weight": 0.15,
+      "pillar": "Investor",
+      "rawMaterial": [
+        "NOI Margin 37.9% — real numbers, not projections",
+        "DSCR 1.95x — debt service covered nearly 2x",
+        "LTV:CAC 35.4:1 referral — best channel is word of mouth",
+        "AOI 44.4 (22x) — operational intelligence score",
+        "25 financial model iterations — this wasn't a napkin sketch"
+      ],
+      "tone": "Data-first, no hype. Let the numbers speak. Transparent by default.",
+      "platforms": ["linkedin", "investor-portal"],
+      "postConcepts": [
+        "37.9% NOI margin. No asterisks. No footnotes.",
+        "DSCR 1.95x — why lenders say yes",
+        "25 iterations of the financial model. Here's what survived.",
+        "LTV:CAC 35.4:1 — our best marketing channel is your recommendation",
+        "AOI 44.4 — the score that measures everything"
+      ]
+    },
+    {
+      "id": "founder-story",
+      "name": "Founder Origin & Authenticity",
+      "weight": 0.15,
+      "pillar": "Founder",
+      "rawMaterial": [
+        "66+ months building CoChalet, $425K sweat equity",
+        "Lost $120K on Airbnb over 3 years with zero ownership",
+        "25 financial model iterations — obsessive validation",
+        "Built the system he wished existed when he was renting",
+        "Justin Kausel — founder, not a fictional persona"
+      ],
+      "tone": "Honest, vulnerable, builder-to-builder. No humble-brag. Real scars.",
+      "platforms": ["linkedin", "youtube", "podcast"],
+      "postConcepts": [
+        "I lost $120K renting before I built this.",
+        "66 months. $425K of sweat equity. Zero regrets.",
+        "The 25th version of the financial model — that's the one that worked.",
+        "I built CoChalet because nobody else would.",
+        "Founder confession: the first 3 years were expensive tuition"
+      ]
+    },
+    {
+      "id": "deep-worker-cut",
+      "name": "The CUT Pain Construct",
+      "weight": 0.15,
+      "pillar": "DW Pain",
+      "rawMaterial": [
+        "Context Switching: 23 min average to regain focus after interruption",
+        "Unproductive: 2.5 hours of actual deep work in an 8-hour day",
+        "Time-Consuming: Weekend setup tax — Day 1 lost to logistics",
+        "CUT is what they feel. CoChalet is the cure.",
+        "Deep Work mode: arrive, open laptop, everything works"
+      ],
+      "tone": "Empathetic, not preachy. Name the pain they already feel. Then show the relief.",
+      "platforms": ["linkedin", "youtube"],
+      "postConcepts": [
+        "The 23-minute tax — every context switch costs you",
+        "2.5 hours — that's all the deep work you actually got today",
+        "Day 1 shouldn't be setup day — arrive and work",
+        "Your office has walls. Your retreat should have mountains.",
+        "CUT the noise. Deep Work at 1,200 feet."
+      ]
+    },
+    {
+      "id": "fondateurs-alpins",
+      "name": "Fondateurs Alpins Community",
+      "weight": 0.10,
+      "pillar": "Community",
+      "rawMaterial": [
+        "800-cap exclusive community of alpine co-owners",
+        "Les 8 premiers — pioneer tier, first 8 Fondateurs",
+        "Not a membership. A deed. Your name. Your mountain.",
+        "Referral LTV:CAC 35.4:1 — the best channel is word of mouth",
+        "Alpine Circle: quarterly gatherings, shared values, zero networking cringe"
+      ],
+      "tone": "Belonging without exclusivity theater. Earned, not bought. Community, not club.",
+      "platforms": ["instagram", "linkedin", "facebook"],
+      "postConcepts": [
+        "800 Fondateurs. Zero strangers. — community manifesto",
+        "Les 8 premiers — who are the first alpine founders?",
+        "Referred by a friend. Welcomed by a mountain.",
+        "Alpine Circle: no nametags, no pitches, just people who get it",
+        "Your neighbor owns their week too. That changes everything."
+      ]
+    }
+  ],
+  "weightValidation": {
+    "totalWeight": 1.0,
+    "note": "Weights must sum to 1.0. Adjust proportionally when adding or removing pillars."
+  }
+}

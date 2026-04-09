@@ -1,4 +1,22 @@
-# Marketing Skills for AI Agents
+# CoChalet Marketing Skills
+
+Fork of [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills) v1.6.0.
+
+## What's Added
+
+- `cochalet/` - CoChalet-specific configs, schemas, tracker, and adapted skills
+- Skill effectiveness tracking with dual-write logs from Hermes execution plus COS OPS quality reviews
+- `cochalet/config/skill-router.json` for self-routing across the mapped model stack
+- Automated Four Nevers compliance checking via `cochalet/tracker/four_nevers_check.py`
+- 13 CoChalet-adapted Wave 2 skill prompts in `cochalet/skills-adapted/`
+
+## Syncing Upstream
+
+```bash
+git fetch upstream && git merge upstream/main
+```
+
+## Upstream README
 
 A collection of AI agent skills focused on marketing tasks. Built for technical marketers and founders who want AI coding agents to help with conversion optimization, copywriting, SEO, analytics, and growth engineering. Works with Claude Code, OpenAI Codex, Cursor, Windsurf, and any agent that supports the [Agent Skills spec](https://agentskills.io).
 

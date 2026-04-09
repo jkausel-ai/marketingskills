@@ -1,0 +1,151 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "COS OPS Quality Review Entry",
+  "type": "object",
+  "required": [
+    "timestamp",
+    "reviews_execution",
+    "skill",
+    "reviewer",
+    "scores",
+    "promoted_to"
+  ],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "reviews_execution": {
+      "type": "string",
+      "description": "Filename of the execution log entry this reviews"
+    },
+    "skill": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "reviewer": {
+      "type": "string",
+      "enum": [
+        "cos-ops-sonnet",
+        "cos-opus",
+        "justin"
+      ]
+    },
+    "scores": {
+      "type": "object",
+      "required": [
+        "brand_compliance",
+        "creative_quality",
+        "factual_accuracy",
+        "voice_authenticity"
+      ],
+      "properties": {
+        "brand_compliance": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "creative_quality": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "factual_accuracy": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "voice_authenticity": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "four_nevers_clean": {
+          "type": "boolean"
+        },
+        "gated_terms_clean": {
+          "type": "boolean"
+        }
+      }
+    },
+    "total_score": {
+      "type": "integer"
+    },
+    "max_score": {
+      "type": "integer",
+      "const": 40
+    },
+    "percentage": {
+      "type": "number"
+    },
+    "violations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "promoted_to": {
+      "type": "string",
+      "enum": [
+        "STAGING",
+        "VERIFY",
+        "PRODUCTION",
+        "REJECTED"
+      ]
+    },
+    "publish_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "published",
+        "skipped"
+      ]
+    },
+    "engagement": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "published_date": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "impressions": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "engagement_rate": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "clicks": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "captures": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+}

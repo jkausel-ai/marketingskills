@@ -1,0 +1,79 @@
+{
+  "name": "CoChalet Brand Voice Guard",
+  "version": "2.0",
+  "updated": "2026-04-08",
+  "description": "V10 brand voice guardrails for all Gemini Studio content generation. Enforces canon terminology, bans confusing or off-brand language, and ensures messaging parity across personas.",
+  "encouragedWords": [
+    "Fondateurs Alpins",
+    "Les 8 premiers",
+    "deeded co-ownership",
+    "Arrivez et vivez",
+    "Montrer le reve",
+    "CUT",
+    "soulagement",
+    "fierte",
+    "appartenance",
+    "alpine co-ownership",
+    "Deep Work retreat",
+    "Fractional Ownership",
+    "turnkey",
+    "revenue-generating",
+    "hassle-free",
+    "premium chalet",
+    "alpine lifestyle",
+    "co-owner",
+    "CoChalet",
+    "Alpine Circle",
+    "Flip Point",
+    "NOI",
+    "ADR",
+    "DSCR"
+  ],
+  "bannedWords": [
+    "fractional ownership",
+    "fractional",
+    "time-share",
+    "timeshare",
+    "investment property",
+    "guaranteed returns",
+    "passive income",
+    "get rich",
+    "no risk",
+    "exclusive club",
+    "luxury lifestyle",
+    "once in a lifetime",
+    "act now",
+    "limited time",
+    "FOMO"
+  ],
+  "bannedWordNotes": {
+    "fractional ownership": "Banned in public-facing content. Use 'deeded co-ownership' or 'alpine co-ownership' instead.",
+    "fractional": "Banned as standalone in public content. Acceptable only in internal/investor docs with full context.",
+    "time-share": "Hyphenated variant also banned. CoChalet is deeded co-ownership, not a timeshare.",
+    "timeshare": "CoChalet is deeded co-ownership, not a timeshare."
+  },
+  "toneGuidelines": {
+    "general": "Warm, confident, grounded. Never salesy or breathless.",
+    "DW": "Empathetic, productivity-aware. Name the pain (CUT), show the relief (soulagement).",
+    "PC": "Aspirational but real. Show the dream (Montrer le reve), anchor in belonging (appartenance).",
+    "investor": "Data-driven, transparent. Canon numbers only. No hype language."
+  },
+  "rules": [
+    {
+      "rule": "Never use 'fractional ownership' or 'fractional' as standalone in public-facing content",
+      "replacement": "deeded co-ownership, alpine co-ownership"
+    },
+    {
+      "rule": "Never use 'timeshare' or 'time-share' in any context",
+      "replacement": "deeded co-ownership"
+    },
+    {
+      "rule": "Always use 'Fondateurs Alpins' instead of 'Founding 800'",
+      "replacement": "Fondateurs Alpins"
+    },
+    {
+      "rule": "Use canon financial numbers only — no rounding or approximation",
+      "source": "memory/MEMORY.md Key Financial Numbers"
+    }
+  ]
+}

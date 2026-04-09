@@ -1,0 +1,103 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Skill Effectiveness Dashboard",
+  "type": "object",
+  "required": [
+    "generated",
+    "summary",
+    "per_skill",
+    "per_model"
+  ],
+  "properties": {
+    "generated": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "period_start": {
+      "type": "string",
+      "format": "date"
+    },
+    "period_end": {
+      "type": "string",
+      "format": "date"
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "total_executions": {
+          "type": "integer"
+        },
+        "total_cost_usd": {
+          "type": "number"
+        },
+        "avg_quality_score": {
+          "type": "number"
+        },
+        "four_nevers_violations": {
+          "type": "integer"
+        },
+        "skills_active": {
+          "type": "integer"
+        },
+        "published_count": {
+          "type": "integer"
+        },
+        "models_used": {
+          "type": "object"
+        }
+      }
+    },
+    "per_skill": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "executions": {
+            "type": "integer"
+          },
+          "avg_quality": {
+            "type": "number"
+          },
+          "total_cost": {
+            "type": "number"
+          },
+          "best_model": {
+            "type": "string"
+          },
+          "published": {
+            "type": "integer"
+          },
+          "trend": {
+            "type": "string",
+            "enum": [
+              "improving",
+              "stable",
+              "declining",
+              "new"
+            ]
+          }
+        }
+      }
+    },
+    "per_model": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "executions": {
+            "type": "integer"
+          },
+          "avg_quality": {
+            "type": "number"
+          },
+          "total_cost": {
+            "type": "number"
+          },
+          "quality_per_dollar": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

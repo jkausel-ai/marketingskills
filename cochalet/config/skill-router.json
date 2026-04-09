@@ -1,0 +1,199 @@
+{
+  "_meta": {
+    "version": "2.0.0",
+    "created": "2026-04-08",
+    "updated": "2026-04-08",
+    "changelog": "v2.0: Updated model rankings from 6-model shootout. DeepSeek replaces gpt-oss as default. Gemma elevated. Gemini elevated for French. Llama excluded.",
+    "author": "COS Opus 4.6",
+    "purpose": "Self-routing skill config. Hermes reads this at task start to auto-select optimal model.",
+    "source_of_truth": "OneDrive → syncs to VPS /mnt/hermes-output/config/",
+    "adapted_from": "coreyhaines31/marketingskills v1.6.0 (MIT)",
+    "pipeline": "GATE CHECK → DISPATCH → STAGING → VERIFY → PRODUCTION"
+  },
+
+  "routing_rules": {
+    "default_model": "deepseek-chat",
+    "default_reason": "Shootout winner for value. 41/50 at $0.003/task. 92% of Sonnet quality at 5% cost.",
+    "escalation_model": "sonnet-hermes",
+    "escalation_triggers": ["strategy", "analysis", "competitive", "pricing", "architecture", "audit"],
+    "speed_model": "qwen-3.6-plus",
+    "speed_triggers": ["bulk", "batch", "draft", "summary", "translate", "extract-list"],
+    "technical_model": "gemma-4",
+    "technical_triggers": ["brainstorm", "ideas", "concepts", "angles", "hooks", "technical", "data", "metrics", "developer"],
+    "french_model": "gemini-2.5-flash",
+    "french_triggers": ["french", "français", "tutoiement", "quebec", "FR-only"],
+    "extraction_model": "gemini-2.5-flash",
+    "extraction_triggers": ["read", "parse", "extract", "summarize-doc", "transcribe"],
+    "canon_prepend": true,
+    "canon_file": "HERMES_KNOWLEDGE_BASE.md",
+    "four_nevers_check": true,
+    "max_retries": 1,
+    "quality_gate": "opus-cos"
+  },
+
+  "models": {
+    "deepseek-chat": {
+      "provider": "openrouter",
+      "key_name": "Hermes GPT",
+      "cost_input_per_M": 0.07,
+      "cost_output_per_M": 0.14,
+      "avg_speed_seconds": 50,
+      "quality_score": 8.2,
+      "shootout_score": "41/50 (#3)",
+      "shootout_verdict": "92% of Sonnet quality at 5% cost. Best value model.",
+      "best_for": ["copywriting", "email", "social-content", "ad-creative", "sales-enablement", "rapid-iteration"],
+      "avoid_for": ["strategy", "complex-analysis"]
+    },
+    "sonnet-hermes": {
+      "provider": "openrouter",
+      "key_name": "Sonnet Hermes",
+      "cost_input_per_M": 3.00,
+      "cost_output_per_M": 15.00,
+      "avg_speed_seconds": 20,
+      "quality_score": 9,
+      "best_for": ["strategy", "competitive-analysis", "cro-audit", "pricing", "architecture"],
+      "avoid_for": ["bulk-drafts", "first-drafts"]
+    },
+    "qwen-3.6-plus": {
+      "provider": "openrouter",
+      "key_name": "Qwen 3.6 Plus Hermes",
+      "cost_input_per_M": 0.38,
+      "cost_output_per_M": 1.72,
+      "avg_speed_seconds": 3.5,
+      "quality_score": 6,
+      "best_for": ["bulk-processing", "drafts", "translations", "schema-markup", "form-generation"],
+      "avoid_for": ["final-copy", "strategy"]
+    },
+    "gemma-4": {
+      "provider": "openrouter",
+      "key_name": "Hermes Gemma 4",
+      "cost_input_per_M": 0.14,
+      "cost_output_per_M": 0.27,
+      "avg_speed_seconds": 15,
+      "quality_score": 8.4,
+      "shootout_score": "42/50 (#2)",
+      "shootout_verdict": "Perfect factual accuracy (10/10). Elevated from ideation-only to technical + creative.",
+      "best_for": ["ideation", "brainstorming", "marketing-ideas", "technical-content", "data-driven-copy", "developer-audience", "factual-accuracy"],
+      "avoid_for": ["broad-audience-copy"]
+    },
+    "gemini-2.5-flash": {
+      "provider": "openrouter",
+      "key_name": "Hermes Gemini",
+      "cost_input_per_M": 0.63,
+      "cost_output_per_M": 1.25,
+      "avg_speed_seconds": 15,
+      "quality_score": 8.0,
+      "shootout_score": "40/50 (#4)",
+      "shootout_verdict": "Best natural French tutoiement (9/10 voice). Elevated from extraction-only to French content.",
+      "best_for": ["french-content", "tutoiement-copy", "conversational-tone", "quebec-market", "document-extraction", "parsing"],
+      "avoid_for": ["data-heavy-analysis", "investor-content"]
+    },
+    "llama-hermes": {
+      "provider": "openrouter",
+      "key_name": "llama-hermes",
+      "cost_input_per_M": 1.35,
+      "cost_output_per_M": 2.70,
+      "avg_speed_seconds": 50,
+      "quality_score": 7.8,
+      "shootout_score": "39/50 (#5)",
+      "shootout_verdict": "EXCLUDED. Same score as Qwen but 5x more expensive. Not worth the cost.",
+      "best_for": ["EXCLUDED"],
+      "avoid_for": ["ALL production tasks"],
+      "status": "EXCLUDED"
+    }
+  },
+
+  "skills": {
+    "content-strategy":       { "tier": 1, "model": "sonnet-hermes",  "priority": "P0", "status": "PRODUCTION",  "cochalet_context": "Autoresearch loop active. DW + PC dual-audience." },
+    "copywriting":            { "tier": 2, "model": "gpt-oss-120b",   "priority": "P0", "status": "PRODUCTION",  "cochalet_context": "V10 brand exercise. Four Nevers enforced." },
+    "email-sequence":         { "tier": 2, "model": "gpt-oss-120b",   "priority": "P0", "status": "PRODUCTION",  "cochalet_context": "7-touch nurture. Justin voice. No price in cold." },
+    "social-content":         { "tier": 2, "model": "gpt-oss-120b",   "priority": "P0", "status": "PRODUCTION",  "cochalet_context": "Top 25 ads pipeline. Bilingual FR-first." },
+    "ad-creative":            { "tier": 2, "model": "gpt-oss-120b",   "priority": "P0", "status": "PRODUCTION",  "cochalet_context": "Gemini Studio visual + gpt-oss copy." },
+    "sales-enablement":       { "tier": 2, "model": "gpt-oss-120b",   "priority": "P0", "status": "PRODUCTION",  "cochalet_context": "ASKmax v8, one-pagers, discovery prep." },
+    "marketing-ideas":        { "tier": 2, "model": "gemma-4",        "priority": "P0", "status": "PRODUCTION",  "cochalet_context": "5 DW concepts delivered today. Karpathy loop." },
+    "product-marketing-context": { "tier": 1, "model": "cos-opus",    "priority": "P0", "status": "PRODUCTION",  "cochalet_context": "Canon v3.1 = this. Foundation for all skills." },
+
+    "seo-audit":              { "tier": 1, "model": "sonnet-hermes",  "priority": "P1", "status": "STAGING",     "cochalet_context": "cochalet.co audit needed. No site live yet." },
+    "ai-seo":                 { "tier": 1, "model": "sonnet-hermes",  "priority": "P1", "status": "STAGING",     "cochalet_context": "LLM citation strategy. Claude/GPT/Gemini." },
+    "page-cro":               { "tier": 1, "model": "sonnet-hermes",  "priority": "P1", "status": "STAGING",     "cochalet_context": "Landing page optimization for cochalet.co." },
+    "copy-editing":           { "tier": 2, "model": "gpt-oss-120b",   "priority": "P1", "status": "STAGING",     "cochalet_context": "Quality gate on all Hermes output." },
+    "cold-email":             { "tier": 2, "model": "gpt-oss-120b",   "priority": "P1", "status": "STAGING",     "cochalet_context": "DW outreach. Montreal/Laurentians geo." },
+    "community-marketing":    { "tier": 1, "model": "sonnet-hermes",  "priority": "P1", "status": "STAGING",     "cochalet_context": "Alpine Circle. Fondateurs Alpins 800-cap." },
+    "ab-test-setup":          { "tier": 1, "model": "sonnet-hermes",  "priority": "P1", "status": "STAGING",     "cochalet_context": "Autoresearch experiment framework." },
+    "competitor-alternatives": { "tier": 2, "model": "gpt-oss-120b",  "priority": "P1", "status": "STAGING",     "cochalet_context": "Casadora = only real threat. 45.5% contested." },
+    "launch-strategy":        { "tier": 1, "model": "sonnet-hermes",  "priority": "P1", "status": "STAGING",     "cochalet_context": "DW campaign + Alpine Circle launch." },
+    "marketing-psychology":   { "tier": 1, "model": "sonnet-hermes",  "priority": "P1", "status": "STAGING",     "cochalet_context": "CUT pain construct. Soulagement/Fierté/Appartenance." },
+    "customer-research":      { "tier": 1, "model": "sonnet-hermes",  "priority": "P1", "status": "STAGING",     "cochalet_context": "DW persona. Deep Worker + Propriétaire Curieux." },
+    "referral-program":       { "tier": 1, "model": "sonnet-hermes",  "priority": "P1", "status": "STAGING",     "cochalet_context": "LTV:CAC 35.4:1 referral channel." },
+    "lead-magnets":           { "tier": 2, "model": "gpt-oss-120b",   "priority": "P1", "status": "STAGING",     "cochalet_context": "DW content offers. ROI calculator." },
+
+    "signup-flow-cro":        { "tier": 1, "model": "sonnet-hermes",  "priority": "P2", "status": "GATE_CHECK",  "cochalet_context": "Discovery call booking flow." },
+    "onboarding-cro":         { "tier": 1, "model": "sonnet-hermes",  "priority": "P2", "status": "GATE_CHECK",  "cochalet_context": "FO onboarding after commitment." },
+    "site-architecture":      { "tier": 1, "model": "sonnet-hermes",  "priority": "P2", "status": "GATE_CHECK",  "cochalet_context": "cochalet.co page hierarchy." },
+    "schema-markup":          { "tier": 3, "model": "qwen-3.6-plus",  "priority": "P2", "status": "GATE_CHECK",  "cochalet_context": "RealEstateAgent, Product, Organization schema." },
+    "paid-ads":               { "tier": 1, "model": "sonnet-hermes",  "priority": "P2", "status": "GATE_CHECK",  "cochalet_context": "Meta/LinkedIn. $500/mo test budget." },
+    "analytics-tracking":     { "tier": 3, "model": "qwen-3.6-plus",  "priority": "P2", "status": "GATE_CHECK",  "cochalet_context": "GA4 + event tracking on cochalet.co." },
+    "pricing-strategy":       { "tier": 1, "model": "sonnet-hermes",  "priority": "P2", "status": "GATE_CHECK",  "cochalet_context": "Canon v3.1 pricing locked. V31_14 pending." },
+    "revops":                 { "tier": 1, "model": "sonnet-hermes",  "priority": "P2", "status": "GATE_CHECK",  "cochalet_context": "Lead lifecycle management." },
+    "free-tool-strategy":     { "tier": 1, "model": "sonnet-hermes",  "priority": "P2", "status": "GATE_CHECK",  "cochalet_context": "ROI/equity calculator for DW leads." },
+
+    "programmatic-seo":       { "tier": 2, "model": "gpt-oss-120b",   "priority": "P3", "status": "BACKLOG",     "cochalet_context": "Region/property pages at scale." },
+    "form-cro":               { "tier": 3, "model": "qwen-3.6-plus",  "priority": "P3", "status": "BACKLOG",     "cochalet_context": "Lead capture forms." },
+    "popup-cro":              { "tier": 3, "model": "qwen-3.6-plus",  "priority": "P3", "status": "BACKLOG",     "cochalet_context": "Exit intent for cochalet.co." },
+    "churn-prevention":       { "tier": 1, "model": "sonnet-hermes",  "priority": "P3", "status": "BACKLOG",     "cochalet_context": "FO retention. Post-Year 1 renewal." },
+    "paywall-upgrade-cro":    { "tier": 0, "model": "SKIP",           "priority": "N/A","status": "EXCLUDED",    "cochalet_context": "Not applicable — CoChalet is not SaaS." }
+  },
+
+  "self_routing_logic": {
+    "description": "Hermes reads this file at task start. Matches task keywords against skill triggers to select model.",
+    "algorithm": [
+      "1. RECEIVE task description from COS or Telegram",
+      "2. MATCH task keywords against skills[].cochalet_context + routing_rules.escalation_triggers",
+      "3. SELECT model: if escalation_trigger matched → sonnet-hermes; if speed_trigger → qwen; if ideation_trigger → gemma-4; if extraction_trigger → gemini-flash; else → gpt-oss-120b (default)",
+      "4. PREPEND Canon context from HERMES_KNOWLEDGE_BASE.md (first 80 lines)",
+      "5. EXECUTE task with selected model",
+      "6. VERIFY output: check Four Nevers compliance, check brand voice, check factual accuracy",
+      "7. IF quality < 7/10 → escalate to sonnet-hermes for revision",
+      "8. SAVE output to deliverables/ with model suffix (e.g., -GPTOSS.md, -SONNET.md)",
+      "9. LOG model used, tokens consumed, quality score to memory/iterations/"
+    ],
+    "cost_ceiling_daily": 0.50,
+    "token_budget_per_task": 4000,
+    "canon_context_tokens": 800
+  },
+
+  "quality_gates": {
+    "four_nevers": ["timeshare", "fractional ownership", "investment returns guaranteed", "Engine Room"],
+    "brand_voice_check": ["warm", "factual", "zero superlatives", "tutoiement in French"],
+    "gated_terms": ["$112,300", "FO Stake", "NOI", "DSCR", "take rate", "LTV:CAC"],
+    "public_safe": ["$2,634/month", "deeded co-ownership", "Fondateurs Alpins", "cochalet.co"],
+    "escalation_on_failure": "sonnet-hermes"
+  },
+
+  "deployment_waves": {
+    "wave_1_now": {
+      "skills": ["content-strategy", "copywriting", "email-sequence", "social-content", "ad-creative", "sales-enablement", "marketing-ideas", "product-marketing-context"],
+      "count": 8,
+      "status": "PRODUCTION",
+      "action": "Formalize routing rules. Already producing output."
+    },
+    "wave_2_this_week": {
+      "skills": ["seo-audit", "ai-seo", "page-cro", "copy-editing", "cold-email", "community-marketing", "ab-test-setup", "competitor-alternatives", "launch-strategy", "marketing-psychology", "customer-research", "referral-program", "lead-magnets"],
+      "count": 13,
+      "status": "STAGING",
+      "action": "Write CoChalet-adapted prompts. Gate check with COS. Deploy via Hermes."
+    },
+    "wave_3_week_2_3": {
+      "skills": ["signup-flow-cro", "onboarding-cro", "site-architecture", "schema-markup", "paid-ads", "analytics-tracking", "pricing-strategy", "revops", "free-tool-strategy"],
+      "count": 9,
+      "status": "GATE_CHECK",
+      "action": "Requires cochalet.co infrastructure. Queue behind website launch."
+    },
+    "wave_4_month_2": {
+      "skills": ["programmatic-seo", "form-cro", "popup-cro", "churn-prevention"],
+      "count": 4,
+      "status": "BACKLOG",
+      "action": "Optimization phase. After baseline established."
+    }
+  }
+}
