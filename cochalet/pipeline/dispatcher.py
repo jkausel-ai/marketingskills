@@ -62,6 +62,18 @@ def read_agent_context(department: str) -> str:
     return f"[AGENT.md not found for {department}]"
 
 
+def read_expertise_context(department: str) -> str:
+    """Read the department expertise.md (agent's self-maintained mental model)."""
+    expertise_path = AGENTS_DIR / department / "expertise.md"
+    if expertise_path.exists():
+        content = expertise_path.read_text(encoding="utf-8")
+        # Only inject last 1000 chars (most recent learnings)
+        if len(content) > 1000:
+            content = "[...earlier learnings truncated...]\n" + content[-1000:]
+        return f"\n\n## AGENT EXPERTISE (self-maintained learnings):\n{content}"
+    return ""
+
+
 def build_output_path(department: str, skill: str, model: str) -> Path:
     """Construct the STAGING output file path."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -87,10 +99,11 @@ def assemble_prompt(gate_result: dict, task_brief: str) -> dict:
         model = gate_result.get("model", "deepseek/deepseek-chat")
 
     # Read components
-    canon_context  = read_canon_context(80)
-    skill_prompt   = read_skill_prompt(skill)
-    agent_context  = read_agent_context(department)
-    output_path    = build_output_path(department, skill, model)
+    canon_context     = read_canon_context(80)
+    skill_prompt      = read_skill_prompt(skill)
+    agent_context     = read_agent_context(department)
+    expertise_context = read_expertise_context(department)
+    output_path       = build_output_path(department, skill, model)
 
     # Detect persona and language from task brief
     task_lower = task_brief.lower()
@@ -119,7 +132,7 @@ def assemble_prompt(gate_result: dict, task_brief: str) -> dict:
 
 ## SECTION B — DEPARTMENT AGENT CONTEXT
 
-{agent_context}
+{agent_context}{expertise_context}
 
 ---
 

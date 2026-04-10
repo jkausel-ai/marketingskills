@@ -9,6 +9,7 @@ DBA verdict: ADAPT (2026-04-09). Generic output scored 7/10 but missing iOS app 
 2. Never lead with price
 3. Never expose the Engine Room (internal ops, margins, take rate)
 4. Never use jargon (DSCR, NOI, LTV:CAC in public-facing output)
+5. NEVER name forbidden terms even to contrast them. Do not write 'unlike timeshare' or 'not fractional ownership'. Instead use: 'unlike usage-rights products', 'unlike shared vacation clubs', 'unlike partial-access arrangements'.
 
 ---
 

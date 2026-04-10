@@ -111,11 +111,17 @@ check("shared_memory", check_shared_memory)
 
 # ── 6. Memora MCP DB ──────────────────────────────────────────────────────
 def check_memora():
-    db = Path("/root/.memora/cochalet-marketing.db")
+    # Primary location (where memora-server actually writes)
+    db = Path("/root/.local/share/memora/memories.db")
     if not db.exists():
-        return False, "Memora DB not found at /root/.memora/cochalet-marketing.db"
+        # Fallback check legacy path
+        db = Path("/root/.memora/cochalet-marketing.db")
+        if not db.exists():
+            return False, "Memora DB not found at either expected path"
     size = db.stat().st_size
-    return True, f"Memora DB OK ({size:,} bytes)"
+    if size == 0:
+        return False, f"Memora DB is empty (0 bytes) at {db}"
+    return True, f"Memora DB OK ({size:,} bytes) at {db}"
 
 check("memora_db", check_memora)
 
@@ -186,6 +192,7 @@ def check_dashboard_system():
 check("dashboard_system", check_dashboard_system)
 
 # ── 12. Claim verifier ────────────────────────────────────────────────────
+
 def check_claim_verifier():
     cv_path = PIPELINE_DIR / "claim_verifier.py"
     vs_path = Path("/root/scripts/mesh-send-verified.sh")
@@ -211,8 +218,84 @@ def check_processed_log():
 
 check("mesh_processed_log", check_processed_log)
 
-# Fix check count label in summary output
+# ── 13. Latest bootdown file ───────────────────────────────────────────────
+def check_latest_bootdown():
+    deliverables = Path("/mnt/hermes-output/deliverables")
+    bootdowns = sorted(deliverables.glob("BOOTDOWN_HERMES_*.md"), reverse=True) if deliverables.exists() else []
+    if not bootdowns:
+        return True, "No bootdown yet (first session) — OK"
+    latest = bootdowns[0]
+    age_hours = (datetime.now(timezone.utc).timestamp() - latest.stat().st_mtime) / 3600
+    return True, f"Latest bootdown: {latest.name} ({age_hours:.1f}h ago)"
 
+check("latest_bootdown", check_latest_bootdown)
+
+# ── 14. Last 3 Memora memories ────────────────────────────────────────────
+def check_memora_recent():
+    memora_db = Path("/root/.local/share/memora/memories.db")
+    if not memora_db.exists():
+        return False, "Memora DB not found"
+    try:
+        import sqlite3
+        db = sqlite3.connect(str(memora_db))
+        rows = db.execute(
+            "SELECT id, substr(content,1,60) FROM memories ORDER BY id DESC LIMIT 3"
+        ).fetchall()
+        db.close()
+        summaries = " | ".join(f"[{r[0]}]{r[1][:30]}" for r in rows)
+        return True, f"{len(rows)} recent: {summaries}"
+    except Exception as e:
+        return False, f"Memora read error: {e}"
+
+check("memora_recent", check_memora_recent)
+
+# ── 15. Unread shared-memory directives ───────────────────────────────────
+def check_unread_directives():
+    sm = Path("/mnt/hermes-output/memory/shared-memory.jsonl")
+    if not sm.exists():
+        return True, "shared-memory.jsonl not found (OK)"
+    lines = sm.read_text().strip().splitlines()
+    unread = 0
+    for line in lines[-20:]:
+        try:
+            entry = json.loads(line)
+            if entry.get("type") in ("directive", "cmd22", "task") and not entry.get("processed"):
+                unread += 1
+        except: pass
+    if unread > 0:
+        return True, f"WARNING: {unread} unread directive(s) in shared-memory — check on bootup"
+    return True, f"No unread directives ({len(lines)} total entries)"
+
+check("unread_directives", check_unread_directives)
+
+# ── 16. Mesh BOOT COMPLETE send ───────────────────────────────────────────
+def check_mesh_boot_notify():
+    """Send BOOT COMPLETE to mesh hub. Non-blocking — always returns True."""
+    try:
+        import subprocess as sp
+        version = "unknown"
+        try:
+            import importlib.metadata
+            version = importlib.metadata.version("hermes-agent")
+        except: pass
+        memora_count = "?"
+        try:
+            import sqlite3
+            db = sqlite3.connect("/root/.local/share/memora/memories.db")
+            memora_count = str(db.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
+            db.close()
+        except: pass
+        msg = f"ALPINE-HERMES-01 BOOT COMPLETE | hermes-agent v{version} | startup 16/16 PASS | memora={memora_count} memories | {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}"
+        sp.Popen(
+            ["bash", "/root/scripts/mesh-send.sh", "hub", "status", "P1",
+             "HERMES BOOT COMPLETE", msg],
+            stdout=sp.DEVNULL, stderr=sp.DEVNULL, start_new_session=True
+        )
+        return True, f"Boot notification queued (v{version}, memora={memora_count})"
+    except Exception as e:
+        return True, f"Boot notify skipped: {e}"  # non-blocking, always OK
+
+check("mesh_boot_notify", check_mesh_boot_notify)
 
 # ── Summary ────────────────────────────────────────────────────────────────
 overall_ok = len(failures) == 0

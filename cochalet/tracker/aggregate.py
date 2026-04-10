@@ -181,7 +181,11 @@ def main() -> int:
         model_bucket[model].append(record)
         models_used[model] += 1
         total_cost += cost
-        period_points.append(record["timestamp"])
+        ts = record["timestamp"]
+        if ts.tzinfo is None:
+            from datetime import timezone as _tz
+            ts = ts.replace(tzinfo=_tz.utc)
+        period_points.append(ts)
 
         if execution.get("four_nevers_self_check") is False:
             four_nevers_flags.add(path.name)
