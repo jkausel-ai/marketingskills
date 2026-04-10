@@ -84,6 +84,16 @@ def build_output_path(department: str, skill: str, model: str) -> Path:
     return dept_dir / filename
 
 
+def read_lead_worker_context(department: str) -> tuple:
+    """Read LEAD.md and WORKER.md for the department if they exist (P5 pattern).
+    Returns (lead_content, worker_content) — empty strings if not present."""
+    lead_path   = AGENTS_DIR / department / "LEAD.md"
+    worker_path = AGENTS_DIR / department / "WORKER.md"
+    lead   = lead_path.read_text(encoding="utf-8")   if lead_path.exists()   else ""
+    worker = worker_path.read_text(encoding="utf-8") if worker_path.exists() else ""
+    return lead, worker
+
+
 def assemble_prompt(gate_result: dict, task_brief: str) -> dict:
     """
     Assemble the full prompt for the department agent.
@@ -99,11 +109,12 @@ def assemble_prompt(gate_result: dict, task_brief: str) -> dict:
         model = gate_result.get("model", "deepseek/deepseek-chat")
 
     # Read components
-    canon_context     = read_canon_context(80)
-    skill_prompt      = read_skill_prompt(skill)
-    agent_context     = read_agent_context(department)
-    expertise_context = read_expertise_context(department)
-    output_path       = build_output_path(department, skill, model)
+    canon_context       = read_canon_context(80)
+    skill_prompt        = read_skill_prompt(skill)
+    agent_context       = read_agent_context(department)
+    expertise_context   = read_expertise_context(department)
+    lead_ctx, worker_ctx = read_lead_worker_context(department)
+    output_path         = build_output_path(department, skill, model)
 
     # Detect persona and language from task brief
     task_lower = task_brief.lower()
@@ -133,6 +144,12 @@ def assemble_prompt(gate_result: dict, task_brief: str) -> dict:
 ## SECTION B — DEPARTMENT AGENT CONTEXT
 
 {agent_context}{expertise_context}
+
+---
+
+## SECTION B2 — LEAD / WORKER ORCHESTRATION (P5)
+
+{(f"### LEAD DIRECTIVE{chr(10)}{lead_ctx}" + chr(10)*2 + f"### WORKER DIRECTIVE{chr(10)}{worker_ctx}") if lead_ctx else "[P5 LEAD/WORKER not configured for this department]"}
 
 ---
 
@@ -188,6 +205,7 @@ Four Nevers compliance is mandatory. If you are about to write "timeshare," "fra
         "assembled_prompt": full_prompt,
         "canon_lines_used": 80,
         "adapted_prompt_used": (ADAPTED_DIR / f"{skill}-cochalet.md").exists(),
+        "p5_lead_worker_used": bool(lead_ctx),
         "pipeline_stage": "DISPATCH",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -256,6 +274,7 @@ def main():
         "output_path": payload["output_path"],
         "payload_file": output_file,
         "adapted_prompt_used": payload["adapted_prompt_used"],
+        "p5_lead_worker_used": payload["p5_lead_worker_used"],
         "next_step": f"Run department agent with payload from {output_file}, then pipeline_runner.py verify",
     }, indent=2, ensure_ascii=False))
 
