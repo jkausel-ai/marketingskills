@@ -51,3 +51,7 @@ Examples:
 - `2026-04-08-email-nurture-GPTOSS.md`
 - `2026-04-08-competitor-analysis-SONNET.md`
 - `2026-04-08-marketing-ideas-GEMMA4.md`
+
+## Canon Guard (Step 4b/6b) — Added 2026-04-11
+4b. PREPEND CANON GUARD from config/canon-guard.md. MANDATORY for ALL creative content.
+6b. VERIFY CANON: check output for fabricated facts (wrong Justin bio, wrong location, invented numbers).

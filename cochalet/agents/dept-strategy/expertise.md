@@ -12,3 +12,87 @@
 **What failed / needed patching:** Generic baselines scored low on specificity (3/10 when no CoChalet context) and brand voice (5/10 — no tutoiement). Some CoChalet outputs violated Four Nevers by using forbidden terms as contrast/comparison language — confirms that prompts need explicit negative-example blocking, not just rule-listing.
 **CoChalet insight:** marketing-psychology output showed strongest emotional resonance when Deep Worker pain (isolation-deprivation, decision fatigue) was named explicitly before solution. content-strategy-d7 violated 'timeshare' — D7 strategy outputs need explicit term guards. product-marketing-context violated 'fractional ownership' — 'fractional' appears in competitive positioning context.
 ---
+
+## [2026-04-11] Skill: email-sequence | Score: 9/10 | Model: google/gemini-2.5-flash
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: email-sequence | Score: 9/10 | Model: local:/root/claude-delegate.sh
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: email-sequence | Score: 9/10 | Model: deepseek/deepseek-chat
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: content-strategy | Score: 9/10 | Model: deepseek/deepseek-chat
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: email-sequence | Score: 9/10 | Model: deepseek/deepseek-chat
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: content-strategy | Score: 9/10 | Model: deepseek/deepseek-chat
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: customer-research | Score: 9/10 | Model: local:/root/claude-delegate.sh
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: content-strategy | Score: 8/10 | Model: local:/root/claude-delegate.sh
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: paid-ads | Score: 8/10 | Model: local:/root/claude-delegate.sh
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: content-strategy | Score: 8/10 | Model: deepseek/deepseek-chat
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: launch-strategy | Score: 9/10 | Model: local:/root/claude-delegate.sh
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: content-strategy | Score: 8/10 | Model: deepseek/deepseek-chat
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: content-strategy | Score: 9/10 | Model: deepseek/deepseek-chat
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: content-strategy | Score: 9/10 | Model: google/gemini-2.5-flash
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---

@@ -165,9 +165,17 @@ class ClaimVerifier:
         Use for: ls, diff, md5sum, wc, systemctl is-active, etc.
         """
         try:
-            result = subprocess.run(
-                cmd, shell=True, capture_output=True, text=True, timeout=15
-            )
+            import shlex as _shlex
+            _ALLOWED_CMDS = frozenset({"grep", "ls", "diff", "md5sum", "wc", "systemctl", "cat", "head", "tail", "test", "stat"})
+            argv = _shlex.split(cmd)
+            if argv[0] not in _ALLOWED_CMDS:
+                return ClaimResult(
+                    verified=False, claim_type="BLOCKED",
+                    evidence=f"Command not in allowlist: {argv[0]}",
+                    value=None, expected=f"exit={expect_exit}",
+                    error=f"Blocked command: {argv[0]}",
+                )
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=15)
             exit_ok = (result.returncode == expect_exit)
             output = (result.stdout + result.stderr).strip()
             content_ok = True

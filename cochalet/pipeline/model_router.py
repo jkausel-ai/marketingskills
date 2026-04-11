@@ -12,11 +12,11 @@ DESIGN PRINCIPLES:
 
 FAILOVER ORDER (per task type):
   DEFAULT:      deepseek-chat → qwen/qwen3-next-80b:free → meta-llama/llama-3.3-70b:free → google/gemma-4-31b:free
-  STRATEGY:     claude-sonnet-4-6 → deepseek-chat → qwen/qwen3-next-80b:free → meta-llama/llama-3.3-70b:free
+  STRATEGY:     claude-delegate.sh (free CLI) → deepseek-chat → qwen/qwen3-next-80b:free → meta-llama/llama-3.3-70b:free
   FRENCH:       gemini-2.5-flash → deepseek-chat → qwen/qwen3-next-80b:free → google/gemma-4-31b:free
   SPEED/BULK:   qwen-3.6-plus → deepseek-chat → qwen/qwen3-next-80b:free → meta-llama/llama-3.3-70b:free
   TECHNICAL:    gemma-4 → deepseek-chat → qwen/qwen3-next-80b:free → nvidia/nemotron-3-super-120b:free
-  VERIFY/PATCH: claude-sonnet-4-6 → deepseek-chat → qwen/qwen3-next-80b:free → meta-llama/llama-3.3-70b:free
+  VERIFY/PATCH: claude-delegate.sh (free CLI) → deepseek-chat → qwen/qwen3-next-80b:free → meta-llama/llama-3.3-70b:free
 
 Usage:
   from model_router import ModelRouter
@@ -47,52 +47,76 @@ OR_MODELS_URL = "https://openrouter.ai/api/v1/models"
 # Each entry is an OpenRouter model ID (or alias resolved below).
 # FREE models are marked with :free suffix — zero cost, always last resort.
 
+# -- Cross-chain escalation order (Phase 3) --------------------------------
+ESCALATION_ORDER = ["simple", "cron", "speed", "default", "french",
+                     "technical", "manager", "verify_patch", "coding",
+                     "director", "strategy"]
+
 CHAINS = {
-    "default": [
+    # ── DIRECTOR TIER (Gemini Flash — temporary fallback) ──────────
+    "director": [
+        "local:/root/opus-delegate.sh",
+CHAINS = {
+    # ── DIRECTOR TIER (Opus 4.6 CLI — $0, orchestration/strategy) ──────────
+    "director": [
+        "local:/root/opus-delegate.sh",
+        "local:/root/claude-delegate.sh",
         "deepseek/deepseek-chat",
-        "qwen/qwen3-next-80b-a3b-instruct:free",
-        "meta-llama/llama-3.3-70b-instruct:free",
-        "google/gemma-4-31b-it:free",
     ],
     "strategy": [
-        "anthropic/claude-sonnet-4-6",
+        "local:/root/opus-delegate.sh",
+        "local:/root/claude-delegate.sh",
         "deepseek/deepseek-chat",
-        "qwen/qwen3-next-80b-a3b-instruct:free",
+    ],
+
+    # ── MANAGER TIER (Sonnet 4.6 CLI — $0, analysis/quality) ──────────────
+    "manager": [
+        "local:/root/claude-delegate.sh",
+        "deepseek/deepseek-chat",
+        "google/gemini-2.5-flash",
+    ],
+    "verify_patch": [
+        "local:/root/claude-delegate.sh",
+        "deepseek/deepseek-chat",
+        "google/gemini-2.5-flash",
+    ],
+
+    # ── SPECIALIST TIER (Codex GPT-5.4 CLI — $0, all code) ────────────────
+    "coding": [
+        "local:/root/codex-delegate.sh",
+        "local:/root/claude-delegate.sh",
+        "deepseek/deepseek-chat",
+    ],
+    "technical": [
+        "local:/root/codex-delegate.sh",
+        "deepseek/deepseek-chat",
+        "google/gemini-2.5-flash",
+    ],
+
+    # ── JUNIOR TIER (DeepSeek/Gemini — cheap, bulk content) ───────────────
+    "default": [
+        "deepseek/deepseek-chat",
+        "google/gemini-2.5-flash",               # $1.25/M fallback
         "meta-llama/llama-3.3-70b-instruct:free",
     ],
     "french": [
-        "google/gemini-2.5-flash-preview",
+        "google/gemini-2.5-flash",
         "deepseek/deepseek-chat",
-        "qwen/qwen3-next-80b-a3b-instruct:free",
-        "google/gemma-4-31b-it:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
     ],
     "speed": [
-        "qwen/qwen3-plus",
+        "google/gemini-2.5-flash",
         "deepseek/deepseek-chat",
-        "qwen/qwen3-next-80b-a3b-instruct:free",
         "meta-llama/llama-3.3-70b-instruct:free",
     ],
-    "technical": [
-        "google/gemma-3-27b-it",
+    "simple": [
+        "google/gemini-2.5-flash",
         "deepseek/deepseek-chat",
-        "qwen/qwen3-next-80b-a3b-instruct:free",
-        "nvidia/nemotron-3-super-120b-a12b:free",
-    ],
-    "verify_patch": [
-        "anthropic/claude-sonnet-4-6",
-        "deepseek/deepseek-chat",
-        "qwen/qwen3-next-80b-a3b-instruct:free",
-        "meta-llama/llama-3.3-70b-instruct:free",
     ],
     "cron": [
-        # Ordered by LIVE availability — probed 2026-04-10, majority of free models down
-        # nemotron + gpt-oss-20b were only ones responding. Gate script probes live each run.
-        "nvidia/nemotron-3-super-120b-a12b:free",
-        "openai/gpt-oss-20b:free",
-        "openai/gpt-oss-120b:free",
-        "google/gemma-4-31b-it:free",
-        "qwen/qwen3-next-80b-a3b-instruct:free",
-        "meta-llama/llama-3.3-70b-instruct:free",
+        "qwen/qwen-2.5-32b-instruct:free",  # Primary: free tier
+        "google/gemini-2.5-flash:free",     # Fallback: free tier
+        "deepseek/deepseek-chat",            # Final fallback: paid
     ],
 }
 
@@ -189,6 +213,17 @@ def health_check(model_id: str, api_key: Optional[str] = None) -> bool:
     if model_id in _DEAD_MODELS:
         return False
 
+    # Local delegate health check (Codex audit requirement C4)
+    if model_id.startswith("local:"):
+        import os
+        script = model_id[len("local:"):]
+        ok = os.path.isfile(script) and os.access(script, os.X_OK)
+        _HEALTH_CACHE[model_id] = {"ok": ok, "checked_at": now}
+        if not ok:
+            _log(f"HEALTH_FAIL: local delegate not executable: {script}")
+            _DEAD_MODELS.add(model_id)
+        return ok
+
     # For :free models, assume available unless explicitly dead
     # (avoids rate-limit hits on health checks)
     if ":free" in model_id:
@@ -231,6 +266,9 @@ def _chain_for_skill(skill: str, task: str = "") -> str:
     # Bulk/speed detection
     if any(kw in task_lower for kw in ["bulk", "batch", "draft", "summary", "translate"]):
         return "speed"
+    # Simple task detection
+    if any(kw in task_lower for kw in ["format", "lookup", "simple", "list", "count", "check", "status"]):
+        return "simple"
     # Use skill map
     return SKILL_CHAIN_MAP.get(skill, "default")
 
@@ -262,6 +300,19 @@ class ModelRouter:
 
         _log(f"GET_MODEL: skill={skill} chain={chain_name} task_preview={task[:40]!r}")
 
+        try:
+            from adaptive_router import AdaptiveRouter, TaskDNA
+            adaptive = AdaptiveRouter()
+            dna = TaskDNA(task=task, skill=skill)
+            suggestion = adaptive.suggest_model(dna)
+            if suggestion:
+                model_id, avg_quality = suggestion
+                if model_id not in _DEAD_MODELS and self._session_failures.get(model_id, 0) < 2:
+                    _log(f"  ADAPTIVE: {model_id} (quality={avg_quality:.1f}, data-driven)")
+                    return model_id
+        except Exception:
+            pass
+
         for model_id in chain:
             if model_id in _DEAD_MODELS:
                 _log(f"  SKIP (dead): {model_id}")
@@ -276,9 +327,20 @@ class ModelRouter:
             else:
                 _log(f"  SKIP (health_fail): {model_id}")
 
-        # All models in chain exhausted — use absolute last resort
+        # All models in primary chain exhausted — try escalation
+        chain_idx = ESCALATION_ORDER.index(chain_name) if chain_name in ESCALATION_ORDER else -1
+        if chain_idx >= 0:
+            for esc_name in ESCALATION_ORDER[chain_idx + 1:]:
+                esc_chain = CHAINS.get(esc_name, [])
+                for esc_model in esc_chain:
+                    if esc_model not in _DEAD_MODELS and self._session_failures.get(esc_model, 0) < 2:
+                        if health_check(esc_model, self.api_key):
+                            _log(f"  ESCALATED: {chain_name} -> {esc_name} -> {esc_model}")
+                            return esc_model
+
+        # Absolute last resort (all chains + escalation exhausted)
         last_resort = "meta-llama/llama-3.3-70b-instruct:free"
-        _log(f"  LAST_RESORT: {last_resort} (all chain models exhausted)")
+        _log(f"  LAST_RESORT: {last_resort} (all chains + escalation exhausted)")
         return last_resort
 
     def next_fallback(self, failed_model: str, skill: str = "", task: str = "") -> str:

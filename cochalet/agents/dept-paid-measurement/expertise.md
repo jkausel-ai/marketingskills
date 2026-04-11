@@ -12,3 +12,21 @@
 **What failed / needed patching:** Generic baselines scored low on specificity (3/10 when no CoChalet context) and brand voice (5/10 — no tutoiement). Some CoChalet outputs violated Four Nevers by using forbidden terms as contrast/comparison language — confirms that prompts need explicit negative-example blocking, not just rule-listing.
 **CoChalet insight:** No skills run in this batch (D4 paid/measurement skills not in 28 READY set). First run pending.
 ---
+
+## [2026-04-11] Skill: paid-ads | Score: 9/10 | Model: deepseek/deepseek-chat
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: paid-ads | Score: 9/10 | Model: google/gemini-2.5-flash
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: ad-creative | Score: 9/10 | Model: google/gemini-2.5-flash
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---

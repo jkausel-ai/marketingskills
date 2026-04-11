@@ -168,7 +168,7 @@ def scan_banned_brand_terms(text: str, guard_terms: list) -> list:
     violations = []
     text_lower = text.lower()
     for term in guard_terms:
-        if isinstance(term, str) and term.lower() in text_lower:
+        if isinstance(term, str) and re.search(r'\b' + re.escape(term) + r'\b', text, re.IGNORECASE):
             violations.append({"type": "BRAND_VOICE", "term": term,
                                "message": f"Banned brand term: '{term}'"})
     return violations

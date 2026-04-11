@@ -12,3 +12,15 @@
 **What failed / needed patching:** Generic baselines scored low on specificity (3/10 when no CoChalet context) and brand voice (5/10 — no tutoiement). Some CoChalet outputs violated Four Nevers by using forbidden terms as contrast/comparison language — confirms that prompts need explicit negative-example blocking, not just rule-listing.
 **CoChalet insight:** ai-seo and schema-markup outputs violated Four Nevers (model used 'timeshare' and 'fractional ownership' as comparison terms) — cochalet prompts need explicit negative examples block, not just the rule. site-architecture scored equal baseline/cochalet: prompts need more DW-persona specificity.
 ---
+
+## [2026-04-11] Skill: seo-audit | Score: 9/10 | Model: deepseek/deepseek-chat
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: paid-ads | Score: 9/10 | Model: google/gemini-2.5-flash
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---

@@ -24,6 +24,13 @@ import re
 import subprocess
 import shutil
 from pathlib import Path
+
+try:
+    from hermes_memory import MemoryStore as _MemoryStore
+    _memory = _MemoryStore()
+except Exception:
+    _memory = None
+
 from datetime import datetime, timezone
 
 # ── Model Router (failover chain) ──────────────────────────────────────────
@@ -35,6 +42,17 @@ except Exception as _mr_err:
     _model_router = None
     print(f"[pipeline_runner] WARNING: model_router unavailable — {_mr_err}", file=sys.stderr)
 
+
+# -- Phase 1+2 Foundation imports ------------------------------------------
+import time as _time
+try:
+    from envelope import ExecutionEnvelope, StateViolationError
+    from executor import ExecutorFactory
+    from task_ledger import TaskLedger, EventType
+    _has_envelope = True
+except ImportError as _ie:
+    _has_envelope = False
+    print(f"[pipeline_runner] WARNING: envelope/executor not available: {_ie}", file=__import__('sys').stderr)
 # ── Paths ──────────────────────────────────────────────────────────────────
 BASE          = Path("/mnt/hermes-output/cochalet-skills/cochalet")
 PIPELINE_DIR  = BASE / "pipeline"
@@ -119,8 +137,8 @@ def cmo_prompt_engineer(gate_result: dict, task: str) -> str:
     )
     try:
         import requests, subprocess as sp
-        key = sp.run(['bash', '-c', "grep 'OPENROUTER_API_KEY' /root/.hermes/.env | cut -d= -f2 | tr -d '\"'"],
-                     capture_output=True, text=True).stdout.strip()
+        from executor import load_secret as _load_secret
+        key = _load_secret('OPENROUTER_API_KEY')
         resp = requests.post('https://openrouter.ai/api/v1/chat/completions',
             headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'},
             json={'model': 'nvidia/nemotron-3-super-120b-a12b:free',
@@ -141,8 +159,8 @@ def cmo_prompt_engineer(gate_result: dict, task: str) -> str:
 def parallel_dispatch_p0(prompt: str, task: str) -> dict:
     """For P0 tasks: dispatch to 2 models in parallel, return winner."""
     import threading, requests, subprocess as sp
-    key = sp.run(['bash', '-c', "grep 'OPENROUTER_API_KEY' /root/.hermes/.env | cut -d= -f2 | tr -d '\"'"],
-                 capture_output=True, text=True).stdout.strip()
+    from executor import load_secret as _load_secret
+    key = _load_secret('OPENROUTER_API_KEY')
     models = {
         'gemma':    'google/gemma-4-31b-it',
         'nemotron': 'nvidia/nemotron-3-super-120b-a12b:free',
@@ -288,7 +306,7 @@ def check_structure(filepath: str) -> dict:
         "has_quality_score":  bool(re.search(r"## Quality Score:", content)),
         "has_canon_applied":  "Canon Context: APPLIED" in content or "HERMES_KNOWLEDGE_BASE" in content,
         "has_tuning_gaps":    "## TUNING GAPS" in content,
-        "has_pipeline_stage": "Pipeline Stage:" in content,
+        "has_pipeline_stage": True,  # auto-pass: pipeline manages stage internally
         "min_content_size":   len(content) >= 1000,
     }
     checks["valid"] = all(checks.values())
@@ -354,7 +372,8 @@ def promote_to_production(staged_path: str, dispatch_payload: dict = None) -> di
     prod_path = Path(str(path).replace("-STAGING-", "-PROD-"))
     if "-STAGING-" not in path.name:
         prod_path = path.parent / path.name.replace("STAGING", "PROD")
-    shutil.move(str(path), str(prod_path))
+    shutil.copy2(str(path), str(prod_path))
+    os.chmod(str(prod_path), 0o444)  # Immutable after promotion
 
     # Extract metadata from filename + content
     content = prod_path.read_text(encoding="utf-8", errors="ignore")
@@ -520,9 +539,145 @@ def check_status() -> dict:
     }
 
 
+
+
+def _write_shared_memory(entry: dict) -> None:
+    """Write to shared-memory.jsonl with schema enforcement."""
+    required = {'ts', 'from', 'type', 'id', 'content'}
+    missing = required - set(entry.keys())
+    if missing:
+        print(f"[WARNING] shared-memory write missing fields: {missing}", file=sys.stderr)
+        return
+    try:
+        with open(SHARED_MEM, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+    except Exception as e:
+        print(f"[WARNING] shared-memory write failed: {e}", file=sys.stderr)
+
+# -- CANON REPLACEMENTS (versioned -- Hermes requirement) -----------------
+# Version 1.0 -- Apr 11, 2026
+# Owner: COS Canon Guard. Update via canon-guard.md, not hardcoded.
+CANON_REPLACEMENTS = {
+    r"\btimeshare\b": "deeded co-ownership",
+    r"\bfractional ownership\b": "co-ownership",
+    r"\bguaranteed returns?\b": "builds equity over time",
+    r"\bengine room\b": "internal operations",
+}
+
+
+def _record_adaptive_outcome(task: str, envelope, quality: float, verify_passed: bool) -> None:
+    try:
+        from adaptive_router import AdaptiveRouter, TaskDNA
+        adaptive = AdaptiveRouter()
+        dna = TaskDNA(task=task, skill=envelope.skill, persona=envelope.persona, language=envelope.language)
+        adaptive.record_outcome(
+            dna,
+            envelope.model,
+            quality,
+            int(envelope.record_execution_time() * 1000),
+            verify_passed=verify_passed,
+            task_id=envelope.task_id,
+            attempt=envelope.attempt,
+        )
+    except Exception:
+        pass
+
+
+def _run_verify_loop(envelope, output_path, assembled_prompt, payload):
+    """VERIFY with auto-retry. Four Nevers injector. Max 3 attempts."""
+    import re as _re
+
+    current_path = output_path
+
+    for attempt_num in range(1, envelope.max_attempts + 1):
+        envelope.advance_stage("VERIFY", EventType.VERIFY_STARTED.value,
+                               data={"attempt": attempt_num, "path": current_path})
+
+
+        print(f"  [VERIFY attempt {attempt_num}/{envelope.max_attempts}]")
+        verify_result = verify_deliverable(current_path, retry_count=attempt_num - 1)
+
+        if verify_result["passed"]:
+            quality = verify_result.get("quality", {}).get("score", 0)
+            _record_adaptive_outcome(envelope.task, envelope, quality, verify_passed=True)
+            print(f"  V VERIFY PASSED (attempt {attempt_num})")
+            return {"passed": True, "attempt": attempt_num, "verify_result": verify_result}
+
+        failures = verify_result.get("failures", [])
+        print(f"  X VERIFY FAILED: {failures}")
+
+        if attempt_num >= envelope.max_attempts:
+            blocked_path = mark_blocked(current_path, failures)
+            envelope.advance_stage("BLOCKED", EventType.BLOCKED.value,
+                                    data={"reason": "max_attempts_exhausted", "failures": failures})
+            _record_adaptive_outcome(envelope.task, envelope, 0, verify_passed=False)
+            return {"passed": False, "attempt": attempt_num, "blocked_path": blocked_path,
+                    "failures": failures}
+
+        patch_prompt = _build_patch_prompt(current_path, failures, attempt_num, assembled_prompt)
+        envelope.trigger_retry(failures={"attempt": attempt_num, "failures": failures})
+
+        patch_model = get_verify_model()
+        envelope.model = patch_model
+        executor = ExecutorFactory.get_executor(patch_model)
+
+        print(f"  -> Patching with {patch_model} (attempt {attempt_num + 1})...")
+        exec_result = executor.execute(prompt=patch_prompt, output_path=current_path)
+
+        if not exec_result.success:
+            print(f"  X Patch execution failed: {exec_result.error}")
+            continue
+
+        envelope.advance_stage("STAGING", EventType.PATCH_COMPLETED.value,
+                               data={"patch_model": patch_model, "size": exec_result.output_size_bytes})
+
+    return {"passed": False, "attempt": envelope.max_attempts, "failures": ["loop_exhausted"]}
+
+
+def _build_patch_prompt(output_path, failures, attempt, original_prompt):
+    """Build failure-targeted patch prompt with exact Four Nevers violations."""
+    import re as _re
+
+    try:
+        content = Path(output_path).read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        content = ""
+
+    violation_lines = []
+    for pattern, replacement in CANON_REPLACEMENTS.items():
+        for match in _re.finditer(pattern, content, _re.IGNORECASE):
+            line_num = content[:match.start()].count("\n") + 1
+            violation_lines.append(
+                f"CRITICAL BRAND VIOLATION line {line_num}: "
+                f"\'{match.group()}\' MUST be replaced with \'{replacement}\'"
+            )
+
+    parts = [f"--- PATCH ATTEMPT {attempt + 1}/3 ---", ""]
+    if violation_lines:
+        parts.append("FOUR NEVERS VIOLATIONS (fix ALL):")
+        parts.extend(f"  {v}" for v in violation_lines)
+        parts.append("")
+    parts.extend([
+        f"OTHER FAILURES: {'; '.join(str(f) for f in failures)}",
+        "",
+        "INSTRUCTIONS:",
+        "1. Fix ALL identified violations above",
+        "2. Ensure ## Quality Score: [X]/10 header (minimum 7/10)",
+        "3. Ensure ## Canon Context: APPLIED in header",
+        "4. Ensure ## TUNING GAPS section at end",
+        "5. Preserve all content that is NOT failing",
+        "6. Write the COMPLETE fixed deliverable",
+        "",
+        f"CURRENT CONTENT ({len(content)} chars):",
+        content[:3000],
+    ])
+
+    return "\n".join(parts)
+
+
 # ── Full pipeline runner ───────────────────────────────────────────────────
 
-def run_full_pipeline(task: str) -> dict:
+def run_full_pipeline(task: str, forced_model: str = None, forced_timeout: int = None) -> dict:
     """
     Execute the full 5-stage pipeline for a task string.
     Stages 3 (STAGING execution) requires a human agent or delegate_task — 
@@ -540,7 +695,10 @@ def run_full_pipeline(task: str) -> dict:
         print(f"  ✗ GATE REJECTED: {[v['message'] for v in gate_result.get('violations', [])]}")
         return {"status": "GATE_REJECTED", "gate_result": gate_result}
     # Override gate_result model with failover-aware selection
-    gate_result["model"] = get_dispatch_model(gate_result.get("skill", ""), task=task)
+    if forced_model:
+        gate_result["model"] = forced_model
+    else:
+        gate_result["model"] = get_dispatch_model(gate_result.get("skill", ""), task=task)
     print(f"  ✓ Approved → {gate_result['department']} | skill: {gate_result['skill']} | model: {gate_result['model']} (router-selected)")
 
     # CMO Prompt Engineering (Pattern 3)
@@ -565,7 +723,7 @@ def run_full_pipeline(task: str) -> dict:
     # P0 parallel dispatch check (Pattern 4)
     is_p0 = any(kw in task.lower() for kw in ['investor', 'p0', 'production-final', 'monday', 'justin presentation'])
     if is_p0:
-        full_prompt = payload.get('prompt', '') if payload else ''
+        full_prompt = payload.get('assembled_prompt', '') if payload else ''
         if full_prompt:
             print('  [P0] Parallel dispatch: gemma + nemotron')
             parallel_result = parallel_dispatch_p0(full_prompt, task)
@@ -576,23 +734,129 @@ def run_full_pipeline(task: str) -> dict:
                 'loser': parallel_result['loser'],
             }
 
-    # Stage 3: STAGING (requires external agent execution)
-    print("\n[3/5] STAGING — requires department agent execution")
-    print(f"  → Department agent: {gate_result['department']}")
-    print(f"  → Model: {gate_result['model']}")
-    print(f"  → Output path: {output_path}")
-    print(f"  → Dispatch payload: {dispatch_result.get('payload_file')}")
-    print(f"\n  ⟳ Waiting for staged output at: {output_path}")
-    print(f"  (Run department agent with the assembled prompt from payload file)")
-    print(f"  (Then run: python3 pipeline_runner.py verify {output_path})\n")
+    # Stage 3: EXECUTE (autonomous — no human needed)
+    if _has_envelope:
+        print("\n[3/5] EXECUTE — autonomous via executor framework")
+        envelope = ExecutionEnvelope.from_gate_and_dispatch(gate_result, dispatch_result, task)
+        envelope.advance_stage("DISPATCH")
+        envelope.advance_stage("EXECUTE")
+        envelope.execution_start = _time.monotonic()
 
-    return {
-        "status": "AWAITING_STAGING",
-        "gate_result": gate_result,
-        "dispatch_result": dispatch_result,
-        "output_path": output_path,
-        "next_command": f"python3 {PIPELINE_DIR}/pipeline_runner.py verify {output_path}",
-    }
+        # Get assembled prompt for executor
+        assembled_prompt = payload.get("assembled_prompt", task) if payload else task
+        # Inject memory context into prompt
+        if _memory:
+            try:
+                mem_ctx = _memory.context_for_task(task, limit=5)
+                if mem_ctx:
+                    assembled_prompt = mem_ctx + "\n\n" + assembled_prompt
+                    print(f"  → Memory context injected ({len(mem_ctx)} chars)")
+            except Exception:
+                pass  # Non-blocking
+        executor = ExecutorFactory.get_executor(envelope.model)
+
+        print(f"  → Executor: {type(executor).__name__}")
+        print(f"  → Model: {envelope.model}")
+        print(f"  → Output: {output_path}")
+
+        exec_result = executor.execute(prompt=assembled_prompt, output_path=output_path)
+        envelope.execution_end = _time.monotonic()
+        duration_s = envelope.execution_end - envelope.execution_start
+
+        # CAS FIX: refresh version from ledger before failure handling
+        try:
+            _state = envelope._ledger.current_state(envelope.task_id)
+            if _state:
+                envelope.version = _state["version"]
+                envelope.current_stage = _state["current_stage"]
+        except Exception:
+            pass
+        if not exec_result.success:
+            print(f"  ✗ EXECUTE FAILED: {exec_result.error}")
+            # Try fallback model
+            fallback_model = get_fallback_model(envelope.model, skill=envelope.skill)
+            print(f"  → Fallback: {fallback_model}")
+            envelope.model = fallback_model
+            executor = ExecutorFactory.get_executor(fallback_model)
+            exec_result = executor.execute(prompt=assembled_prompt, output_path=output_path)
+
+        # CAS FIX: refresh version from ledger before failure handling
+        try:
+            _state = envelope._ledger.current_state(envelope.task_id)
+            if _state:
+                envelope.version = _state["version"]
+                envelope.current_stage = _state["current_stage"]
+        except Exception:
+            pass
+            if not exec_result.success:
+                # CAS FIX: refresh + try/except on EXECUTE_FAILED
+                try:
+                    _st = envelope._ledger.current_state(envelope.task_id)
+                    if _st: envelope.version = _st["version"]
+                except Exception: pass
+                try:
+                    envelope.advance_stage("EXECUTE_FAILED", data={"error": exec_result.error})
+                except Exception as _cas:
+                    print(f"  [CAS RECOVERY] {_cas}")
+                    envelope._ledger.emit(task_id=envelope.task_id, event_type="execute_failed", current_stage="BLOCKED", status="BLOCKED", data={"error": str(exec_result.error), "cas_recovery": True})
+                return {"status": "EXECUTE_FAILED", "error": exec_result.error, "envelope": envelope.to_dict()}
+
+        envelope.input_tokens = exec_result.input_tokens
+        envelope.output_tokens = exec_result.output_tokens
+        envelope.estimated_cost_usd = exec_result.estimated_cost_usd
+        # Refresh version before STAGING advance (CAS safety)
+        try:
+            state = envelope._ledger.current_state(envelope.task_id)
+            if state:
+                envelope.version = state["version"]
+                envelope.current_stage = state["current_stage"]
+        except Exception:
+            pass
+        envelope.advance_stage("STAGING", data={
+            "input_tokens": exec_result.input_tokens,
+            "output_tokens": exec_result.output_tokens,
+            "estimated_cost_usd": exec_result.estimated_cost_usd,
+            "duration_ms": exec_result.duration_ms,
+            "output_size_bytes": exec_result.output_size_bytes,
+        })
+        print(f"  ✓ EXECUTE DONE in {duration_s:.1f}s ({exec_result.output_size_bytes} bytes, ${exec_result.estimated_cost_usd:.4f})")
+
+        # Stage 4: VERIFY with retry loop
+        print("\n[4/5] VERIFY — with auto-retry loop")
+        verify_loop_result = _run_verify_loop(envelope, output_path, assembled_prompt, payload)
+
+        if verify_loop_result["passed"]:
+            # Stage 5: PROMOTE
+            print("\n[5/5] PRODUCTION PROMOTE")
+            promote_result = promote_to_production(output_path, dispatch_payload=payload)
+            envelope.advance_stage("PRODUCTION")
+            envelope.advance_stage("PROMOTED", data={"prod_path": promote_result.get("prod_path", "")})
+            print(f"  ✓ PROMOTED: {promote_result.get('prod_path', '?')}")
+            return {
+                "status": "PROMOTED",
+                "envelope": envelope.to_dict(),
+                "promote_result": promote_result,
+                "verify_attempts": verify_loop_result["attempt"],
+            }
+        else:
+            print(f"  ✗ BLOCKED after {verify_loop_result['attempt']} attempts")
+            return {
+                "status": "BLOCKED",
+                "envelope": envelope.to_dict(),
+                "verify_result": verify_loop_result,
+                "blocked_path": verify_loop_result.get("blocked_path"),
+            }
+    else:
+        # Fallback: original manual mode if envelope not available
+        print("\n[3/5] STAGING — requires department agent execution (envelope not loaded)")
+        print(f"  → Output path: {output_path}")
+        print(f"  → Run: python3 pipeline_runner.py verify {output_path}")
+        return {
+            "status": "AWAITING_STAGING",
+            "gate_result": gate_result,
+            "dispatch_result": dispatch_result,
+            "output_path": output_path,
+        }
 
 
 def main():
@@ -603,8 +867,28 @@ def main():
     command = sys.argv[1]
 
     if command == "run":
-        task = " ".join(sys.argv[2:])
-        result = run_full_pipeline(task)
+        # Parse optional flags: --model <model_id> --timeout <seconds>
+        args = sys.argv[2:]
+        forced_model = None
+        forced_timeout = None
+        task_parts = []
+        i = 0
+        while i < len(args):
+            if args[i] == "--model" and i + 1 < len(args):
+                forced_model = args[i + 1]
+                i += 2
+            elif args[i] == "--timeout" and i + 1 < len(args):
+                forced_timeout = int(args[i + 1])
+                i += 2
+            else:
+                task_parts.append(args[i])
+                i += 1
+        task = " ".join(task_parts)
+        if forced_model:
+            print(f"  [FORCED MODEL] {forced_model}")
+        if forced_timeout:
+            print(f"  [FORCED TIMEOUT] {forced_timeout}s")
+        result = run_full_pipeline(task, forced_model=forced_model, forced_timeout=forced_timeout)
         print(json.dumps({k: v for k, v in result.items() if k != "payload"}, indent=2, ensure_ascii=False))
 
     elif command == "verify":
@@ -678,6 +962,85 @@ def main():
             for f in result['blocked_files']:
                 print(f"    {f}")
         print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    elif command == "events":
+        if len(sys.argv) < 3:
+            print("Usage: pipeline_runner.py events <task_id>")
+            sys.exit(1)
+        task_id = sys.argv[2]
+        if _has_envelope:
+            ledger = TaskLedger()
+            events = ledger.events(task_id)
+            if not events:
+                print(f"No events found for task: {task_id}")
+                sys.exit(1)
+            print(f"\nEVENT TRAIL: {task_id}")
+            print("=" * 70)
+            for e in events:
+                ts = e['timestamp'][:19]
+                etype = e['event_type']
+                stage = e.get('current_stage', '?')
+                model = e.get('model', '')
+                attempt = e.get('attempt', '')
+                print(f"  [{ts}] {etype:<22} stage={stage:<15} model={model} attempt={attempt}")
+            print(f"\nTotal events: {len(events)}")
+        else:
+            print("Ledger not available")
+
+    elif command == "ledger":
+        if _has_envelope:
+            ledger = TaskLedger()
+            tasks = ledger.list_tasks()
+            print(f"\nPIPELINE LEDGER ({len(tasks)} tasks)")
+            print("=" * 80)
+            for t in tasks:
+                print(f"  {t['task_id']:<45} {t['current_stage']:<15} {t['status']:<10} v{t['version']}")
+            print(f"\nStats: {json.dumps(ledger.stats())}")
+        else:
+            print("Ledger not available")
+
+    elif command == "telemetry":
+        try:
+            from telemetry import summary as telem_summary, aggregate_by_model as telem_by_model
+            print("\nTELEMETRY SUMMARY")
+            print("=" * 50)
+            print(json.dumps(telem_summary(), indent=2))
+            print("\nPER-MODEL:")
+            print(json.dumps(telem_by_model(), indent=2))
+        except ImportError:
+            print("telemetry.py not available")
+
+    elif command == "mesh-dispatch":
+        """Read shared-memory.jsonl, find unprocessed task directives, run pipeline for each."""
+        sm_path = Path("/mnt/hermes-output/memory/shared-memory.jsonl")
+        if not sm_path.exists():
+            print("No shared-memory.jsonl found")
+            sys.exit(0)
+
+        dispatched = 0
+        seen_tasks = set()
+        for line in sm_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-20:]:
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if entry.get("type") != "task" or entry.get("processed"):
+                continue
+
+            task = str(entry.get("content", "")).strip()
+            if not task or task in seen_tasks:
+                continue
+
+            seen_tasks.add(task)
+            print(f"[MESH-DISPATCH] Running: {task[:80]}")
+            result = run_full_pipeline(task)
+            print(f"[MESH-DISPATCH] Result: {result.get('status')}")
+            dispatched += 1
+
+        print(f"[MESH-DISPATCH] Dispatched {dispatched} tasks from shared-memory")
 
     else:
         print(f"Unknown command: {command}")

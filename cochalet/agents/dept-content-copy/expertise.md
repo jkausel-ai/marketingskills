@@ -12,3 +12,51 @@
 **What failed / needed patching:** Generic baselines scored low on specificity (3/10 when no CoChalet context) and brand voice (5/10 — no tutoiement). Some CoChalet outputs violated Four Nevers by using forbidden terms as contrast/comparison language — confirms that prompts need explicit negative-example blocking, not just rule-listing.
 **CoChalet insight:** cold-email CoChalet output violated Four Nevers with 'timeshare' and 'fractional ownership' — model used them as contrast/comparison terms when told what CoChalet is not. Fix: add explicit instruction 'do not name forbidden terms even to contrast them.'
 ---
+
+## [2026-04-10] Skill: cold-email | Score: 8/10 | Model: deepseek/deepseek-chat-v3
+**What worked:** French tutoiement cold email with Canon 120k hook and copropriété framing
+**What failed / needed patching:** Model included strategic notes in output — needed post-processing to strip
+**CoChalet insight:** deepseek reliably self-audits Four Nevers — flags violations in its own notes
+---
+
+## [2026-04-11] Skill: cold-email | Score: 9/10 | Model: google/gemini-2.5-flash
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: social-content | Score: 9/10 | Model: google/gemini-2.5-flash
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: social-content | Score: 9/10 | Model: google/gemini-2.5-flash
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: cold-email | Score: 9/10 | Model: google/gemini-2.5-flash
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: cold-email | Score: 9/10 | Model: local:/root/claude-delegate.sh
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: social-content | Score: 9/10 | Model: google/gemini-2.5-flash
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---
+
+## [2026-04-11] Skill: cold-email | Score: 9/10 | Model: google/gemini-2.5-flash
+**What worked:** Execution completed — qualitative review pending
+**What failed / needed patching:** None noted
+**CoChalet insight:** Review deliverable for patterns to capture here
+---

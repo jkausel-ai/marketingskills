@@ -206,3 +206,31 @@ When triggered by daily-content-dispatch.sh at 6AM UTC:
 - Never uses a model not in skill-router.json without logging override
 - Never exposes GATED facts (FO Stake, DSCR, NOI, IRR) to department agents for public content
 - Never marks a task DONE without an execution log in /iterations/
+
+---
+
+## PIPELINE INTEGRATION (Added 2026-04-11)
+
+### New Pipeline Components (Phase 1-6, score 100/100)
+
+The pipeline is now FULLY AUTONOMOUS. When running `pipeline_runner.py run "task"`:
+1. GATE CHECK validates task (Four Nevers + brand voice + dept routing)
+2. DISPATCH assembles 5-section prompt (canon + agent + lead/worker + skill + task)
+3. CMO PROMPT ENGINEER rewrites skill prompt for the specific task
+4. EXECUTE calls the model (local delegate CLI or OpenRouter API) via executor.py
+5. VERIFY runs 4-layer check. On failure: retry with Four Nevers injector (max 3)
+6. PROMOTE copies to PROD, chmod 444, logs to ledger + telemetry + expertise
+
+### Key Files to Know
+- `task_ledger.py` — SQLite ledger. Query: `python3 task_ledger.py stats`
+- `envelope.py` — FSM envelope. Crash recovery: `ExecutionEnvelope.from_ledger(task_id)`
+- `executor.py` — Stage 3 engine. LocalDelegateExecutor + OpenRouterExecutor
+- `liveness_probe.py` — Zombie watchdog. Run: `python3 liveness_probe.py`
+- `telemetry.py` — Analytics. Run: `python3 telemetry.py summary`
+- `adaptive_router.py` — Self-tuning. Run: `python3 adaptive_router.py status`
+
+### Integration Brief
+Full documentation at `/mnt/hermes-output/deliverables/COS_PIPELINE_INTEGRATION_BRIEF.md`
+
+### Mesh Protocol
+ALL communication via `bash /root/scripts/cos-mesh-protocol.sh [dispatch|result|review|poll|broadcast]`

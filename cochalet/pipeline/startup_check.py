@@ -297,6 +297,30 @@ def check_mesh_boot_notify():
 
 check("mesh_boot_notify", check_mesh_boot_notify)
 
+
+# -- 17. Delegate script health -------------------------------------------
+def check_delegates():
+    import os
+    delegates = {
+        "opus": "/root/opus-delegate.sh",
+        "claude": "/root/claude-delegate.sh",
+        "codex": "/root/codex-delegate.sh",
+    }
+    missing = []
+    not_exec = []
+    for name, path in delegates.items():
+        if not os.path.isfile(path):
+            missing.append(name)
+        elif not os.access(path, os.X_OK):
+            not_exec.append(name)
+    if missing:
+        return False, f"Missing delegates: {missing}"
+    if not_exec:
+        return False, f"Not executable: {not_exec}"
+    return True, f"All {len(delegates)} delegates OK (opus/claude/codex)"
+
+check("delegate_scripts", check_delegates)
+
 # ── Summary ────────────────────────────────────────────────────────────────
 overall_ok = len(failures) == 0
 ts = datetime.now(timezone.utc).isoformat()

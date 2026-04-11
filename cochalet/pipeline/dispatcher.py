@@ -9,6 +9,7 @@ Usage: python3 dispatcher.py '{"approved": true, "skill": "email-sequence", "dep
 """
 
 import json
+import hashlib
 import sys
 import os
 from pathlib import Path
@@ -78,7 +79,8 @@ def build_output_path(department: str, skill: str, model: str) -> Path:
     """Construct the STAGING output file path."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     model_tag = model.split("/")[-1].upper().replace("-", "").replace(".", "")[:12]
-    filename = f"{today}-{skill}-STAGING-{model_tag}.md"
+    task_hash = hashlib.md5(f"{today}{skill}{model_tag}".encode()).hexdigest()[:6]
+    filename = f"{today}-{skill}-{task_hash}-STAGING-{model_tag}.md"
     dept_dir = DELIVERABLES / department
     dept_dir.mkdir(parents=True, exist_ok=True)
     return dept_dir / filename

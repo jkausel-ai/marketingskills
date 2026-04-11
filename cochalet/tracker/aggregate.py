@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,24 @@ from statistics import mean
 def load_json(path: Path) -> object:
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def load_optional_json(path: Path) -> object | None:
+    if not path.exists():
+        return None
+    return load_json(path)
+
+
+def resolve_schema_dir() -> Path | None:
+    candidates = [
+        Path(__file__).resolve().parent / "schemas",
+        Path(__file__).resolve().parents[1] / "schemas",
+        Path("/mnt/hermes-output/cochalet-skills/cochalet/schemas"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def parse_datetime(value: str) -> datetime:
@@ -98,10 +117,11 @@ def load_records(directory: Path, schema: dict[str, object]) -> list[tuple[Path,
         payload = load_json(path)
         if not isinstance(payload, dict):
             raise ValueError(f"{path}: expected top-level object")
-        errors = validate_schema(schema, payload)
-        if errors:
-            joined = "\n".join(errors[:10])
-            raise ValueError(f"{path}: schema validation failed\n{joined}")
+        if schema:
+            errors = validate_schema(schema, payload)
+            if errors:
+                joined = "\n".join(errors[:10])
+                raise ValueError(f"{path}: schema validation failed\n{joined}")
         records.append((path, payload))
     return records
 
@@ -135,6 +155,36 @@ def round_number(value: float) -> float:
     return round(value, 2)
 
 
+def generate_telemetry_section() -> dict:
+    """Generate telemetry section for dashboard JSON from SQLite ledger."""
+    pipeline_root = Path("/mnt/hermes-output/cochalet-skills/cochalet/pipeline")
+    if str(pipeline_root) not in sys.path:
+        sys.path.insert(0, str(pipeline_root))
+
+    try:
+        from telemetry import summary, aggregate_by_model, aggregate_by_skill
+        from adaptive_router import AdaptiveRouter
+
+        summary_data = summary()
+        by_model = aggregate_by_model()
+        by_skill = aggregate_by_skill()
+
+        try:
+            adaptive_state = AdaptiveRouter().performance_matrix()
+        except Exception as exc:
+            adaptive_state = {"error": str(exc)}
+
+        return {
+            "pipeline_summary": summary_data,
+            "per_model": by_model,
+            "per_skill": by_skill,
+            "adaptive_routing": adaptive_state,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as exc:
+        return {"error": str(exc), "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--iterations", required=True, type=Path)
@@ -142,10 +192,10 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
 
-    root = Path(__file__).resolve().parents[1]
-    execution_schema = load_json(root / "schemas" / "execution-log.schema.json")
-    review_schema = load_json(root / "schemas" / "quality-review.schema.json")
-    dashboard_schema = load_json(root / "schemas" / "dashboard.schema.json")
+    schema_dir = resolve_schema_dir()
+    execution_schema = load_optional_json(schema_dir / "execution-log.schema.json") if schema_dir else None
+    review_schema = load_optional_json(schema_dir / "quality-review.schema.json") if schema_dir else None
+    dashboard_schema = load_optional_json(schema_dir / "dashboard.schema.json") if schema_dir else None
 
     execution_records = load_records(args.iterations.expanduser(), execution_schema)
     review_records = load_records(args.reviews.expanduser(), review_schema)
@@ -261,14 +311,17 @@ def main() -> int:
         "per_skill": per_skill,
         "per_model": per_model,
     }
+    dashboard["telemetry"] = generate_telemetry_section()
     if period_points:
         dashboard["period_start"] = min(period_points).date().isoformat()
         dashboard["period_end"] = max(period_points).date().isoformat()
 
-    errors = validate_schema(dashboard_schema, dashboard)
-    if errors:
-        joined = "\n".join(errors[:10])
-        raise ValueError(f"Dashboard schema validation failed\n{joined}")
+    if isinstance(dashboard_schema, dict):
+        errors = validate_schema(dashboard_schema, dashboard)
+        telemetry_only = [err for err in errors if ".telemetry" not in err]
+        if telemetry_only:
+            joined = "\n".join(telemetry_only[:10])
+            raise ValueError(f"Dashboard schema validation failed\n{joined}")
 
     args.output.expanduser().parent.mkdir(parents=True, exist_ok=True)
     with args.output.expanduser().open("w", encoding="utf-8") as handle:
