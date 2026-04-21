@@ -6,3 +6,10 @@ requires_python: ">=3.11"
 commands:
   - /sonnet-swarm
   - /swarm
+  - /swarm-status
+  - /swarm-latest
+  - /swarm-help
+  - /swarm-brief
+  - /swarm-backlog
+  - /swarm-compliance
+  - /swarm-section
