@@ -27,6 +27,11 @@ if [ "$#" -lt 1 ]; then
   exit 2
 fi
 
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+  usage
+  exit 0
+fi
+
 if [ ! -x "$DELEGATE" ]; then
   echo "DELEGATE_FAIL: missing executable delegate: $DELEGATE" >&2
   exit 1
