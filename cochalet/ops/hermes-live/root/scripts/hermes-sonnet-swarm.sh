@@ -121,9 +121,9 @@ if ! timeout "$TIMEOUT" "$DELEGATE" "$PROMPT_FILE" > "$RESULT_TMP"; then
   code=$?
   {
     printf '# Sonnet Swarm Failed\n\n'
-    printf '- Timestamp: `%s`\n' "$STAMP"
-    printf '- Exit code: `%s`\n' "$code"
-    printf '- Delegate: `%s`\n\n' "$DELEGATE"
+    printf '%s\n' "- Timestamp: \`$STAMP\`"
+    printf '%s\n' "- Exit code: \`$code\`"
+    printf '%s\n\n' "- Delegate: \`$DELEGATE\`"
     printf '## Task\n\n%s\n' "$RAW_TASK"
   } > "$OUT_FILE"
   echo "SONNET_SWARM_FAILED: $OUT_FILE" >&2
@@ -132,9 +132,9 @@ fi
 
 {
   printf '# Sonnet OAuth Swarm Review\n\n'
-  printf '- Timestamp: `%s`\n' "$STAMP"
-  printf '- Delegate: `%s`\n' "$DELEGATE"
-  printf '- Task: `%s`\n\n' "$RAW_TASK"
+  printf '%s\n' "- Timestamp: \`$STAMP\`"
+  printf '%s\n' "- Delegate: \`$DELEGATE\`"
+  printf '%s\n\n' "- Task: \`$RAW_TASK\`"
   cat "$RESULT_TMP"
 } > "$OUT_FILE"
 
