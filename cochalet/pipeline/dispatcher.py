@@ -11,7 +11,6 @@ Usage: python3 dispatcher.py '{"approved": true, "skill": "email-sequence", "dep
 import json
 import hashlib
 import sys
-import os
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -23,6 +22,25 @@ try:
 except Exception as _mr_err:
     _model_router = None
     print(f"[dispatcher] WARNING: model_router unavailable — {_mr_err}", file=sys.stderr)
+
+# ── Idempotency store (replay-safe dispatch) ──────────────────────────────
+# If the same (skill, department, task_brief) triple is dispatched twice — for
+# example a cron re-fire after a crash — we want to return the cached payload
+# instead of rebuilding it, so downstream ledger events stay consistent.
+_LIB_DIR = Path(__file__).resolve().parent / "lib"
+if str(_LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(_LIB_DIR))
+try:
+    from idempotency import IdempotencyStore as _IdempotencyStore  # type: ignore
+except Exception:  # pragma: no cover - defensive fallback
+    _IdempotencyStore = None  # type: ignore[assignment]
+
+
+def _compute_task_hash(skill: str, department: str, task_brief: str) -> str:
+    """Deterministic content hash used as trace_id for idempotency + state."""
+
+    canonical = f"{skill}\x1f{department}\x1f{task_brief.strip()}"
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 BASE          = Path("/mnt/hermes-output/cochalet-skills/cochalet")
@@ -50,7 +68,7 @@ def read_skill_prompt(skill: str) -> str:
     # Check generic skill
     generic_path = BASE.parent / "skills" / skill / "SKILL.md"
     if generic_path.exists():
-        return f"[WARNING: Using generic skill prompt — no CoChalet adaptation exists yet]\n\n" + \
+        return "[WARNING: Using generic skill prompt — no CoChalet adaptation exists yet]\n\n" + \
                generic_path.read_text(encoding="utf-8")
     return f"[SKILL PROMPT NOT FOUND: {skill}]\nExecute this skill based on CoChalet context only."
 
@@ -75,11 +93,12 @@ def read_expertise_context(department: str) -> str:
     return ""
 
 
-def build_output_path(department: str, skill: str, model: str) -> Path:
+def build_output_path(department: str, skill: str, model: str, task_brief: str = "") -> Path:
     """Construct the STAGING output file path."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     model_tag = model.split("/")[-1].upper().replace("-", "").replace(".", "")[:12]
-    task_hash = hashlib.md5(f"{today}{skill}{model_tag}".encode()).hexdigest()[:6]
+    hash_seed = f"{today}\x1f{department}\x1f{skill}\x1f{model_tag}\x1f{task_brief.strip()}"
+    task_hash = hashlib.md5(hash_seed.encode()).hexdigest()[:6]
     filename = f"{today}-{skill}-{task_hash}-STAGING-{model_tag}.md"
     dept_dir = DELIVERABLES / department
     dept_dir.mkdir(parents=True, exist_ok=True)
@@ -116,7 +135,7 @@ def assemble_prompt(gate_result: dict, task_brief: str) -> dict:
     agent_context       = read_agent_context(department)
     expertise_context   = read_expertise_context(department)
     lead_ctx, worker_ctx = read_lead_worker_context(department)
-    output_path         = build_output_path(department, skill, model)
+    output_path         = build_output_path(department, skill, model, task_brief)
 
     # Detect persona and language from task brief
     task_lower = task_brief.lower()
@@ -196,8 +215,15 @@ Write the complete deliverable to: **{output_path}**
 Four Nevers compliance is mandatory. If you are about to write "timeshare," "fractional ownership," "guaranteed returns," or "Engine Room" — stop and use the approved alternative.
 """
 
+    # Deterministic trace_id lets state_machine, idempotency, and retries
+    # all refer to the same task across runs. task_id keeps the human-friendly
+    # timestamped name for deliverable filenames + shared-memory events.
+    task_hash = _compute_task_hash(skill, department, task_brief)
+
     dispatch_payload = {
         "task_id": f"{skill}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
+        "trace_id": task_hash,
+        "task_hash": task_hash,
         "skill": skill,
         "department": department,
         "model": model,
@@ -210,6 +236,10 @@ Four Nevers compliance is mandatory. If you are about to write "timeshare," "fra
         "p5_lead_worker_used": bool(lead_ctx),
         "pipeline_stage": "DISPATCH",
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        # Pass the V2 gate signal through so pipeline_runner / opus_judge can
+        # route without re-scoring. Defaults are safe (no pillars detected).
+        "v2_alignment_score": gate_result.get("v2_alignment_score", 0),
+        "v2_pillars_touched": gate_result.get("v2_pillars_touched", []),
     }
 
     return dispatch_payload
@@ -263,7 +293,32 @@ def main():
         }, indent=2))
         sys.exit(1)
 
-    payload = assemble_prompt(gate_result, task_brief)
+    # Wrap payload assembly in an idempotency check so retried dispatches for
+    # the same (skill, department, task_brief) return the cached payload
+    # instead of rebuilding it. On a fresh run the operation executes once
+    # and the result is persisted under (trace_id, "dispatch_assemble").
+    def _build_payload() -> dict:
+        return assemble_prompt(gate_result, task_brief)
+
+    if _IdempotencyStore is not None:
+        try:
+            trace_id = _compute_task_hash(
+                gate_result.get("skill", "content-strategy"),
+                gate_result.get("department", "dept-strategy"),
+                task_brief,
+            )
+            store = _IdempotencyStore()
+            payload = store.safe_execute(
+                "trace_id", trace_id, "dispatch_assemble", _build_payload
+            )
+        except Exception as _idem_err:  # pragma: no cover - defensive
+            print(
+                f"[dispatcher] idempotency disabled: {_idem_err}",
+                file=sys.stderr,
+            )
+            payload = _build_payload()
+    else:
+        payload = _build_payload()
     log_dispatch(payload)
     output_file = save_payload(payload)
 

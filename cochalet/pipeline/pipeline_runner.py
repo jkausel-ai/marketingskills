@@ -25,6 +25,17 @@ import subprocess
 import shutil
 from pathlib import Path
 
+# === Cost + V2 alignment tracking hooks (installed 2026-04-17) ===
+try:
+    _pipeline_dir = os.path.dirname(os.path.abspath(__file__))
+    if _pipeline_dir + "/lib" not in sys.path:
+        sys.path.insert(0, _pipeline_dir + "/lib")
+    from cost_v2_tracker import log_cost as _log_cost, log_v2_alignment as _log_v2
+except Exception:
+    def _log_cost(**kwargs): pass
+    def _log_v2(**kwargs): pass
+
+
 try:
     from hermes_memory import MemoryStore as _MemoryStore
     _memory = _MemoryStore()
@@ -46,13 +57,168 @@ except Exception as _mr_err:
 # -- Phase 1+2 Foundation imports ------------------------------------------
 import time as _time
 try:
-    from envelope import ExecutionEnvelope, StateViolationError
+    from envelope import ExecutionEnvelope
     from executor import ExecutorFactory
     from task_ledger import TaskLedger, EventType
     _has_envelope = True
 except ImportError as _ie:
     _has_envelope = False
     print(f"[pipeline_runner] WARNING: envelope/executor not available: {_ie}", file=__import__('sys').stderr)
+
+# -- V2 agent-engineering maturity hooks (state machine, judge, pager) ------
+# All three are optional and best-effort. The envelope/ledger remain the
+# authoritative execution record; these modules add shadow state for HITL
+# recovery, independent judging of STAGING output, and terminal alerting.
+_LIB_DIR = Path(__file__).resolve().parent / "lib"
+if str(_LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(_LIB_DIR))
+_EVAL_DIR = Path(__file__).resolve().parent / "eval"
+if str(_EVAL_DIR) not in sys.path:
+    sys.path.insert(0, str(_EVAL_DIR))
+_NOTIF_DIR = Path(__file__).resolve().parent / "notifications"
+if str(_NOTIF_DIR) not in sys.path:
+    sys.path.insert(0, str(_NOTIF_DIR))
+
+try:
+    from state_machine import StateMachineStore as _StateMachineStore  # type: ignore
+    _state_store = _StateMachineStore()
+except Exception as _sm_err:  # pragma: no cover - defensive
+    _state_store = None
+    print(
+        f"[pipeline_runner] state_machine unavailable: {_sm_err}",
+        file=sys.stderr,
+    )
+
+try:
+    from opus_judge import judge_staging_output as _judge_staging_output  # type: ignore
+except Exception:  # pragma: no cover - defensive
+    _judge_staging_output = None  # type: ignore[assignment]
+
+try:
+    from pager import fire_telegram_alert as _fire_telegram_alert  # type: ignore
+except Exception:  # pragma: no cover - defensive
+    _fire_telegram_alert = None  # type: ignore[assignment]
+
+
+# Envelope stage strings → state_machine CORE/SUPPLEMENTAL stages. Unmapped
+# stages (e.g. re-entering STAGING after a retry) are skipped silently so the
+# shadow ledger never blocks execution.
+_STATE_STAGE_MAP = {
+    "GATE_CHECK": "GATE_CHECK",
+    "DISPATCH": "DISPATCH",
+    "EXECUTE": "EXECUTE",
+    "EXECUTE_FAILED": "DLQ",
+    "STAGING": "STAGING",
+    "VERIFY": "VERIFY",
+    "BLOCKED": "DLQ",
+    "PRODUCTION": "PRODUCE",
+    "PROMOTED": "PROMOTE",
+}
+
+
+def _shadow_state_transition(envelope, new_stage: str, details: dict = None) -> None:
+    """Mirror an envelope stage transition into the state_machine store.
+
+    Best-effort: the envelope remains the source of truth. We ignore
+    ``ValueError`` (state_machine's strict DAG may reject retries that
+    envelope tolerates) and any sqlite hiccups.
+    """
+
+    if _state_store is None:
+        return
+    mapped = _STATE_STAGE_MAP.get(new_stage)
+    if mapped is None:
+        return
+    trace_id = getattr(envelope, "trace_id", None) or getattr(envelope, "task_id", None)
+    task_hash = getattr(envelope, "task_hash", None) or getattr(envelope, "task_id", None)
+    if not trace_id or not task_hash:
+        return
+    payload = {
+        "task_hash": task_hash,
+        "skill_name": getattr(envelope, "skill", None),
+        "model_used": getattr(envelope, "model", None),
+    }
+    if details:
+        payload.update(details)
+    try:
+        _state_store.transition(trace_id=trace_id, to_stage=mapped, details=payload)
+    except Exception:  # pragma: no cover - shadow is best-effort
+        pass
+
+
+def _page_on_terminal_error(envelope, reason: str) -> None:
+    """Fire a Telegram alert for a terminal failure. Best-effort."""
+
+    if _fire_telegram_alert is None:
+        return
+    try:
+        _fire_telegram_alert(
+            trace_id=getattr(envelope, "task_id", "unknown"),
+            skill=getattr(envelope, "skill", "unknown"),
+            directive=reason,
+        )
+    except Exception:  # pragma: no cover - alerts must not block pipeline
+        pass
+
+
+# Skill classes for which the opus_judge verdict is BLOCKING (per DP5 scope).
+# All other skills still get a judge score logged, but it does not gate
+# promotion. Expand this list only after calibration (≥85% judge-human
+# agreement on ≥30 gold traces, per NEW_SESSION_SEED.md regression suite).
+_FORCE_OPUS_SKILLS = frozenset({
+    "legal-opinion-tracker-cochalet",
+    "legal-opinion-tracker",
+    "interview-prep-cochalet",  # founder-facing external content
+})
+
+
+def _maybe_run_opus_judge(envelope, staging_path: str, verify_result: dict):
+    """Run the independent opus_judge on a clean-verify STAGING file.
+
+    Returns None when the judge is unavailable or skipped, a dict otherwise.
+    The dict may carry ``blocking_fail=True`` only when the skill is in
+    ``_FORCE_OPUS_SKILLS`` *and* the judge returned a non-pass verdict.
+    """
+
+    if _judge_staging_output is None:
+        return None
+    try:
+        staging_text = Path(staging_path).read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return None
+
+    skill = getattr(envelope, "skill", None) or "unknown"
+    alignment_score = 0
+    try:
+        # The alignment score is already attached to the envelope during
+        # dispatch so we can route without re-scoring here.
+        alignment_score = int(getattr(envelope, "v2_alignment_score", 0) or 0)
+    except Exception:
+        alignment_score = 0
+
+    verdict = None
+    try:
+        verdict = _judge_staging_output(
+            trace_id=getattr(envelope, "task_id", "unknown"),
+            skill_name=skill,
+            task_text=getattr(envelope, "task", ""),
+            staging_output=staging_text,
+            schema_contract={},
+            gate_alignment_score=alignment_score,
+            skill_category=getattr(envelope, "department", "general"),
+        )
+    except Exception as exc:  # pragma: no cover - judge crash → skip
+        print(f"[judge] skipped on {skill}: {exc}", file=sys.stderr)
+        return None
+
+    if not isinstance(verdict, dict):
+        return None
+
+    is_force_opus = skill in _FORCE_OPUS_SKILLS
+    blocking_fail = bool(is_force_opus and not verdict.get("pass", True))
+    verdict["blocking_fail"] = blocking_fail
+    verdict["skill"] = skill
+    return verdict
 # ── Paths ──────────────────────────────────────────────────────────────────
 BASE          = Path("/mnt/hermes-output/cochalet-skills/cochalet")
 PIPELINE_DIR  = BASE / "pipeline"
@@ -62,6 +228,11 @@ GUARD_PATH    = BASE / "config/brand-voice-guard.json"
 ITERATIONS    = Path("/mnt/hermes-output/memory/iterations")
 SHARED_MEM    = Path("/mnt/hermes-output/memory/shared-memory.jsonl")
 DELIVERABLES  = Path("/mnt/hermes-output/deliverables")
+ARCHIVE_DELIVERABLE_DIRS = {
+    "cmo-blocked-rescue-backups",
+    "cmo-resolved",
+    "cmo-rejected",
+}
 
 # ── Pattern 3: CMO Meta-Prompt ─────────────────────────────────────────────
 CMO_META_PROMPT = """
@@ -136,7 +307,7 @@ def cmo_prompt_engineer(gate_result: dict, task: str) -> str:
         expertise_excerpt=expertise or 'No prior executions yet.'
     )
     try:
-        import requests, subprocess as sp
+        import requests
         from executor import load_secret as _load_secret
         key = _load_secret('OPENROUTER_API_KEY')
         resp = requests.post('https://openrouter.ai/api/v1/chat/completions',
@@ -158,7 +329,8 @@ def cmo_prompt_engineer(gate_result: dict, task: str) -> str:
 
 def parallel_dispatch_p0(prompt: str, task: str) -> dict:
     """For P0 tasks: dispatch to 2 models in parallel, return winner."""
-    import threading, requests, subprocess as sp
+    import threading
+    import requests
     from executor import load_secret as _load_secret
     key = _load_secret('OPENROUTER_API_KEY')
     models = {
@@ -177,8 +349,10 @@ def parallel_dispatch_p0(prompt: str, task: str) -> dict:
         except Exception as e:
             results[name] = f'ERROR: {e}'
     threads = [threading.Thread(target=run_model, args=(n, s)) for n, s in models.items()]
-    for t in threads: t.start()
-    for t in threads: t.join(timeout=65)
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=65)
     # Pick winner: fewer violations + longer output
     def score(txt):
         bad = sum(1 for term in ['timeshare', 'fractional ownership', 'guaranteed return'] if term in txt.lower())
@@ -302,14 +476,21 @@ def check_structure(filepath: str) -> dict:
     except Exception:
         return {"valid": False}
 
+    has_tuning_gaps = bool(
+        re.search(r"^##\s*TUNING GAPS\b", content, re.MULTILINE | re.IGNORECASE)
+        or re.search(r"^##\s*has_tuning_gaps:\s*true\b", content, re.MULTILINE | re.IGNORECASE)
+    )
     checks = {
-        "has_quality_score":  bool(re.search(r"## Quality Score:", content)),
+        "has_quality_score":  bool(re.search(r"^##\s*Quality Score:", content, re.MULTILINE)),
         "has_canon_applied":  "Canon Context: APPLIED" in content or "HERMES_KNOWLEDGE_BASE" in content,
-        "has_tuning_gaps":    "## TUNING GAPS" in content,
-        "has_pipeline_stage": True,  # auto-pass: pipeline manages stage internally
+        "has_skill":          bool(re.search(r"^##\s*Skill:", content, re.MULTILINE)),
+        "has_pipeline_stage": bool(re.search(r"^##\s*Pipeline Stage:", content, re.MULTILINE)),
+        "has_tuning_gaps":    has_tuning_gaps,
         "min_content_size":   len(content) >= 1000,
     }
-    checks["valid"] = all(checks.values())
+    blocking_keys = ["has_quality_score", "has_canon_applied", "has_skill", "has_pipeline_stage", "min_content_size"]
+    checks["warnings"] = [] if has_tuning_gaps else ["missing optional TUNING GAPS section"]
+    checks["valid"] = all(checks[key] for key in blocking_keys)
     return checks
 
 
@@ -340,7 +521,10 @@ def verify_deliverable(filepath: str, retry_count: int = 0) -> dict:
         score = quality_result.get("score", "?")
         failures.append(f"QUALITY_GATE: score {score}/10 < 7/10 threshold")
     if not structure_result.get("valid", True):
-        missing = [k for k, v in structure_result.items() if not v and k != "valid"]
+        missing = [
+            k for k, v in structure_result.items()
+            if not v and k not in {"valid", "has_tuning_gaps", "warnings"}
+        ]
         failures.append(f"STRUCTURE: missing {missing}")
     if brand_violations:
         failures.append(f"BRAND_VOICE: banned terms found: {brand_violations[:5]}")
@@ -447,7 +631,7 @@ def promote_to_production(staged_path: str, dispatch_payload: dict = None) -> di
     try:
         with open(SHARED_MEM, "a", encoding="utf-8") as f:
             f.write(json.dumps(sm_entry, ensure_ascii=False) + "\n")
-    except Exception as e:
+    except Exception:
         pass  # Non-blocking
 
     # Append to dept expertise file
@@ -523,9 +707,16 @@ def mark_blocked(filepath: str, failures: list):
 
 def check_status() -> dict:
     """Scan deliverables/ for STAGING and BLOCKED files."""
-    staging = list(DELIVERABLES.rglob("*STAGING*.md"))
-    blocked = list(DELIVERABLES.rglob("*BLOCKED*.md"))
-    production = list(DELIVERABLES.rglob("*PROD*.md"))
+    def live_deliverable(path: Path) -> bool:
+        try:
+            parts = path.relative_to(DELIVERABLES).parts
+        except ValueError:
+            return False
+        return not any(part in ARCHIVE_DELIVERABLE_DIRS for part in parts)
+
+    staging = [p for p in DELIVERABLES.rglob("*STAGING*.md") if live_deliverable(p)]
+    blocked = [p for p in DELIVERABLES.rglob("*BLOCKED*.md") if live_deliverable(p)]
+    production = [p for p in DELIVERABLES.rglob("*PROD*.md") if live_deliverable(p)]
     iterations = list(ITERATIONS.glob("*.json")) if ITERATIONS.exists() else []
 
     return {
@@ -585,23 +776,37 @@ def _record_adaptive_outcome(task: str, envelope, quality: float, verify_passed:
 
 def _run_verify_loop(envelope, output_path, assembled_prompt, payload):
     """VERIFY with auto-retry. Four Nevers injector. Max 3 attempts."""
-    import re as _re
 
     current_path = output_path
 
     for attempt_num in range(1, envelope.max_attempts + 1):
         envelope.advance_stage("VERIFY", EventType.VERIFY_STARTED.value,
                                data={"attempt": attempt_num, "path": current_path})
+        _shadow_state_transition(envelope, "VERIFY",
+                                 details={"event_id": f"verify-{envelope.task_id}-{attempt_num}"})
 
 
         print(f"  [VERIFY attempt {attempt_num}/{envelope.max_attempts}]")
         verify_result = verify_deliverable(current_path, retry_count=attempt_num - 1)
 
         if verify_result["passed"]:
-            quality = verify_result.get("quality", {}).get("score", 0)
-            _record_adaptive_outcome(envelope.task, envelope, quality, verify_passed=True)
-            print(f"  V VERIFY PASSED (attempt {attempt_num})")
-            return {"passed": True, "attempt": attempt_num, "verify_result": verify_result}
+            # V2 independent judge on clean verify. Only fires when the
+            # deterministic checks pass, to avoid double-paying for obviously
+            # broken output. Scope-limited per DP5 pre-approval: only
+            # force-Opus classes use the judge's verdict as blocking.
+            judge_verdict = _maybe_run_opus_judge(envelope, current_path, verify_result)
+            if judge_verdict is not None and judge_verdict.get("blocking_fail"):
+                failures = list(verify_result.get("failures", []))
+                failures.append(
+                    f"JUDGE_FAIL: {judge_verdict.get('correction_directive', 'judge rejected')}"
+                )
+                verify_result = {**verify_result, "passed": False, "failures": failures}
+                print(f"  X JUDGE BLOCKED: {failures[-1]}")
+            else:
+                quality = verify_result.get("quality", {}).get("score", 0)
+                _record_adaptive_outcome(envelope.task, envelope, quality, verify_passed=True)
+                print(f"  V VERIFY PASSED (attempt {attempt_num})")
+                return {"passed": True, "attempt": attempt_num, "verify_result": verify_result}
 
         failures = verify_result.get("failures", [])
         print(f"  X VERIFY FAILED: {failures}")
@@ -610,6 +815,15 @@ def _run_verify_loop(envelope, output_path, assembled_prompt, payload):
             blocked_path = mark_blocked(current_path, failures)
             envelope.advance_stage("BLOCKED", EventType.BLOCKED.value,
                                     data={"reason": "max_attempts_exhausted", "failures": failures})
+            _shadow_state_transition(envelope, "BLOCKED", details={
+                "event_id": f"blocked-{envelope.task_id}",
+                "last_error": "max_attempts_exhausted",
+                "alert_sent": True,
+            })
+            _page_on_terminal_error(
+                envelope,
+                f"VERIFY exhausted after {attempt_num} attempts: {failures}",
+            )
             _record_adaptive_outcome(envelope.task, envelope, 0, verify_passed=False)
             return {"passed": False, "attempt": attempt_num, "blocked_path": blocked_path,
                     "failures": failures}
@@ -623,6 +837,20 @@ def _run_verify_loop(envelope, output_path, assembled_prompt, payload):
 
         print(f"  -> Patching with {patch_model} (attempt {attempt_num + 1})...")
         exec_result = executor.execute(prompt=patch_prompt, output_path=current_path)
+        # --HOOK-COST--
+        try:
+            _log_cost(
+                model=getattr(exec_result, 'model_id', '') or (gate_result.get('model','') if isinstance(gate_result, dict) else ''),
+                input_tokens=getattr(exec_result, 'input_tokens', 0),
+                output_tokens=getattr(exec_result, 'output_tokens', 0),
+                cost_usd=getattr(exec_result, 'estimated_cost_usd', 0.0),
+                success=bool(getattr(exec_result, 'success', False)),
+                dept=gate_result.get('department','') if isinstance(gate_result, dict) else '',
+                skill=gate_result.get('skill','') if isinstance(gate_result, dict) else '',
+                task_id=getattr(envelope, 'task_id', '') if 'envelope' in dir() else '',
+            )
+        except Exception:
+            pass
 
         if not exec_result.success:
             print(f"  X Patch execution failed: {exec_result.error}")
@@ -684,13 +912,23 @@ def run_full_pipeline(task: str, forced_model: str = None, forced_timeout: int =
     this function runs stages 1, 2, and 4+5 after staging is complete.
     """
     print(f"\n{'='*60}")
-    print(f"COCHALET PIPELINE STARTING")
+    print("COCHALET PIPELINE STARTING")
     print(f"Task: {task[:80]}...")
     print(f"{'='*60}\n")
 
     # Stage 1: GATE CHECK
     print("[1/5] GATE CHECK...")
     gate_result = run_gate_check(task)
+    # --HOOK-V2--
+    try:
+        _log_v2(
+            task_id=gate_result.get("skill", "unknown") + "-" + str(abs(hash(task)) % 10_000_000),
+            skill=gate_result.get("skill", ""),
+            dept=gate_result.get("department", ""),
+            gate_result=gate_result,
+        )
+    except Exception:
+        pass
     if not gate_result.get("approved", False):
         print(f"  ✗ GATE REJECTED: {[v['message'] for v in gate_result.get('violations', [])]}")
         return {"status": "GATE_REJECTED", "gate_result": gate_result}
@@ -720,6 +958,23 @@ def run_full_pipeline(task: str, forced_model: str = None, forced_timeout: int =
     print(f"  ✓ Prompt assembled → output: {output_path}")
     print(f"  → Adapted prompt used: {dispatch_result.get('adapted_prompt_used')}")
 
+    # Idempotent replay guard: if an earlier retry already produced a valid
+    # STAGING file for this exact dispatch payload, promote it instead of
+    # spending another model call and producing divergent content.
+    if output_path and Path(output_path).exists():
+        existing_verify = verify_deliverable(output_path)
+        if existing_verify.get("passed"):
+            print("  → Existing STAGING output verifies; promoting without re-execution")
+            promote_result = promote_to_production(output_path, dispatch_payload=payload)
+            print(f"  ✓ PROMOTED EXISTING: {promote_result.get('prod_path', '?')}")
+            return {
+                "status": "PROMOTED_EXISTING",
+                "dispatch_result": dispatch_result,
+                "promote_result": promote_result,
+                "verify_result": existing_verify,
+            }
+        print(f"  → Existing STAGING output failed verify; re-executing: {existing_verify.get('failures', [])}")
+
     # P0 parallel dispatch check (Pattern 4)
     is_p0 = any(kw in task.lower() for kw in ['investor', 'p0', 'production-final', 'monday', 'justin presentation'])
     if is_p0:
@@ -738,8 +993,22 @@ def run_full_pipeline(task: str, forced_model: str = None, forced_timeout: int =
     if _has_envelope:
         print("\n[3/5] EXECUTE — autonomous via executor framework")
         envelope = ExecutionEnvelope.from_gate_and_dispatch(gate_result, dispatch_result, task)
+        # Carry V2 alignment score through the envelope so the judge can
+        # route without re-scoring. Falls back to 0 (no pillars detected).
+        envelope.v2_alignment_score = int(gate_result.get("v2_alignment_score", 0))
+        # Use dispatcher's deterministic trace_id so state_machine + envelope
+        # refer to the same trace.
+        envelope.trace_id = dispatch_result.get("trace_id") or envelope.task_id
+        envelope.task_hash = dispatch_result.get("task_hash") or envelope.task_id
         envelope.advance_stage("DISPATCH")
+        _shadow_state_transition(envelope, "DISPATCH", details={
+            "event_id": f"dispatch-{envelope.task_id}",
+            "thesis_version": "v2" if envelope.v2_alignment_score >= 2 else "v1",
+        })
         envelope.advance_stage("EXECUTE")
+        _shadow_state_transition(envelope, "EXECUTE", details={
+            "event_id": f"execute-{envelope.task_id}",
+        })
         envelope.execution_start = _time.monotonic()
 
         # Get assembled prompt for executor
@@ -760,6 +1029,20 @@ def run_full_pipeline(task: str, forced_model: str = None, forced_timeout: int =
         print(f"  → Output: {output_path}")
 
         exec_result = executor.execute(prompt=assembled_prompt, output_path=output_path)
+        # --HOOK-COST--
+        try:
+            _log_cost(
+                model=getattr(exec_result, 'model_id', '') or (gate_result.get('model','') if isinstance(gate_result, dict) else ''),
+                input_tokens=getattr(exec_result, 'input_tokens', 0),
+                output_tokens=getattr(exec_result, 'output_tokens', 0),
+                cost_usd=getattr(exec_result, 'estimated_cost_usd', 0.0),
+                success=bool(getattr(exec_result, 'success', False)),
+                dept=gate_result.get('department','') if isinstance(gate_result, dict) else '',
+                skill=gate_result.get('skill','') if isinstance(gate_result, dict) else '',
+                task_id=getattr(envelope, 'task_id', '') if 'envelope' in dir() else '',
+            )
+        except Exception:
+            pass
         envelope.execution_end = _time.monotonic()
         duration_s = envelope.execution_end - envelope.execution_start
 
@@ -779,6 +1062,20 @@ def run_full_pipeline(task: str, forced_model: str = None, forced_timeout: int =
             envelope.model = fallback_model
             executor = ExecutorFactory.get_executor(fallback_model)
             exec_result = executor.execute(prompt=assembled_prompt, output_path=output_path)
+        # --HOOK-COST--
+        try:
+            _log_cost(
+                model=getattr(exec_result, 'model_id', '') or (gate_result.get('model','') if isinstance(gate_result, dict) else ''),
+                input_tokens=getattr(exec_result, 'input_tokens', 0),
+                output_tokens=getattr(exec_result, 'output_tokens', 0),
+                cost_usd=getattr(exec_result, 'estimated_cost_usd', 0.0),
+                success=bool(getattr(exec_result, 'success', False)),
+                dept=gate_result.get('department','') if isinstance(gate_result, dict) else '',
+                skill=gate_result.get('skill','') if isinstance(gate_result, dict) else '',
+                task_id=getattr(envelope, 'task_id', '') if 'envelope' in dir() else '',
+            )
+        except Exception:
+            pass
 
         # CAS FIX: refresh version from ledger before failure handling
         try:
@@ -788,18 +1085,35 @@ def run_full_pipeline(task: str, forced_model: str = None, forced_timeout: int =
                 envelope.current_stage = _state["current_stage"]
         except Exception:
             pass
-            if not exec_result.success:
-                # CAS FIX: refresh + try/except on EXECUTE_FAILED
-                try:
-                    _st = envelope._ledger.current_state(envelope.task_id)
-                    if _st: envelope.version = _st["version"]
-                except Exception: pass
-                try:
-                    envelope.advance_stage("EXECUTE_FAILED", data={"error": exec_result.error})
-                except Exception as _cas:
-                    print(f"  [CAS RECOVERY] {_cas}")
-                    envelope._ledger.emit(task_id=envelope.task_id, event_type="execute_failed", current_stage="BLOCKED", status="BLOCKED", data={"error": str(exec_result.error), "cas_recovery": True})
-                return {"status": "EXECUTE_FAILED", "error": exec_result.error, "envelope": envelope.to_dict()}
+        if not exec_result.success:
+            # CAS FIX: refresh + try/except on EXECUTE_FAILED
+            try:
+                _st = envelope._ledger.current_state(envelope.task_id)
+                if _st:
+                    envelope.version = _st["version"]
+            except Exception:
+                pass
+            try:
+                envelope.advance_stage("EXECUTE_FAILED", data={"error": exec_result.error})
+            except Exception as _cas:
+                print(f"  [CAS RECOVERY] {_cas}")
+                envelope._ledger.emit(
+                    task_id=envelope.task_id,
+                    event_type="execute_failed",
+                    current_stage="BLOCKED",
+                    status="BLOCKED",
+                    data={"error": str(exec_result.error), "cas_recovery": True},
+                )
+            _shadow_state_transition(envelope, "EXECUTE_FAILED", details={
+                "event_id": f"exec-fail-{envelope.task_id}",
+                "last_error": str(exec_result.error)[:300],
+                "alert_sent": True,
+            })
+            _page_on_terminal_error(
+                envelope,
+                f"EXECUTE failed after fallback: {exec_result.error}",
+            )
+            return {"status": "EXECUTE_FAILED", "error": exec_result.error, "envelope": envelope.to_dict()}
 
         envelope.input_tokens = exec_result.input_tokens
         envelope.output_tokens = exec_result.output_tokens
@@ -819,6 +1133,9 @@ def run_full_pipeline(task: str, forced_model: str = None, forced_timeout: int =
             "duration_ms": exec_result.duration_ms,
             "output_size_bytes": exec_result.output_size_bytes,
         })
+        _shadow_state_transition(envelope, "STAGING", details={
+            "event_id": f"staging-{envelope.task_id}",
+        })
         print(f"  ✓ EXECUTE DONE in {duration_s:.1f}s ({exec_result.output_size_bytes} bytes, ${exec_result.estimated_cost_usd:.4f})")
 
         # Stage 4: VERIFY with retry loop
@@ -830,7 +1147,14 @@ def run_full_pipeline(task: str, forced_model: str = None, forced_timeout: int =
             print("\n[5/5] PRODUCTION PROMOTE")
             promote_result = promote_to_production(output_path, dispatch_payload=payload)
             envelope.advance_stage("PRODUCTION")
+            _shadow_state_transition(envelope, "PRODUCTION", details={
+                "event_id": f"produce-{envelope.task_id}",
+            })
             envelope.advance_stage("PROMOTED", data={"prod_path": promote_result.get("prod_path", "")})
+            _shadow_state_transition(envelope, "PROMOTED", details={
+                "event_id": f"promote-{envelope.task_id}",
+                "promotion_status": "PROMOTED",
+            })
             print(f"  ✓ PROMOTED: {promote_result.get('prod_path', '?')}")
             return {
                 "status": "PROMOTED",
@@ -916,12 +1240,12 @@ def main():
             score_val = result['quality'].get('score', '?')
             retry_prefix = f"PREVIOUS ATTEMPT FAILED (score {score_val}/10). Weakness: {failures_str}. On this attempt, specifically address: {fix_suggestion}."
             if result['retry_count'] < 2:
-                print(f"  → Auto-patch with sonnet-hermes required, then re-verify")
+                print("  → Auto-patch with sonnet-hermes required, then re-verify")
                 print(f"  → Retry note: {retry_prefix}")
             else:
                 blocked = mark_blocked(filepath, result['failures'])
                 print(f"  ✗ BLOCKED after 3 attempts → {blocked}")
-                print(f"  → CMO review required — check shared-memory.jsonl")
+                print("  → CMO review required — check shared-memory.jsonl")
 
         print(json.dumps(result, indent=2, ensure_ascii=False))
 
@@ -940,7 +1264,7 @@ def main():
 
         result = promote_to_production(filepath)
         if result["success"]:
-            print(f"  ✓ PRODUCTION PROMOTED")
+            print("  ✓ PRODUCTION PROMOTED")
             print(f"  → Production file: {result['prod_path']}")
             print(f"  → Execution log: {result['execution_log']}")
             print(f"  → Word count: {result['word_count']}")
@@ -958,7 +1282,7 @@ def main():
         print(f"  Production: {result['production_count']} files")
         print(f"  Exec logs:  {result['execution_logs']}")
         if result['blocked_files']:
-            print(f"\n  ⚠ BLOCKED (CMO review needed):")
+            print("\n  ⚠ BLOCKED (CMO review needed):")
             for f in result['blocked_files']:
                 print(f"    {f}")
         print(json.dumps(result, indent=2, ensure_ascii=False))

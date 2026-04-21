@@ -11,10 +11,10 @@ DESIGN PRINCIPLES:
 - All failover decisions are logged to /tmp/model_router.log for audit
 
 FAILOVER ORDER (per task type):
-  DEFAULT:      deepseek-chat → qwen/qwen3-next-80b:free → meta-llama/llama-3.3-70b:free → google/gemma-4-31b:free
+  DEFAULT:      claude-delegate.sh (free CLI) → deepseek-chat → gemini → llama free
   STRATEGY:     claude-delegate.sh (free CLI) → deepseek-chat → qwen/qwen3-next-80b:free → meta-llama/llama-3.3-70b:free
-  FRENCH:       gemini-2.5-flash → deepseek-chat → qwen/qwen3-next-80b:free → google/gemma-4-31b:free
-  SPEED/BULK:   qwen-3.6-plus → deepseek-chat → qwen/qwen3-next-80b:free → meta-llama/llama-3.3-70b:free
+  FRENCH:       claude-delegate.sh (free CLI) → deepseek-chat → gemini → llama free
+  SPEED/BULK:   claude-delegate.sh (free CLI) → deepseek-chat → gemini → llama free
   TECHNICAL:    gemma-4 → deepseek-chat → qwen/qwen3-next-80b:free → nvidia/nemotron-3-super-120b:free
   VERIFY/PATCH: claude-delegate.sh (free CLI) → deepseek-chat → qwen/qwen3-next-80b:free → meta-llama/llama-3.3-70b:free
 
@@ -52,10 +52,11 @@ ESCALATION_ORDER = ["simple", "cron", "speed", "default", "french",
                      "technical", "manager", "verify_patch", "coding",
                      "director", "strategy"]
 
-CHAINS = {
-    # ── DIRECTOR TIER (Gemini Flash — temporary fallback) ──────────
-    "director": [
-        "local:/root/opus-delegate.sh",
+# Real marketing/review work must run through OAuth-backed local delegates
+# first. Gemini remains a lightweight driver/fallback only; it should not
+# become the primary executor for deliverables just because it is cheap/fast.
+DELEGATE_FIRST_CHAINS = {"default", "french", "speed", "manager", "verify_patch", "strategy"}
+
 CHAINS = {
     # ── DIRECTOR TIER (Opus 4.6 CLI — $0, orchestration/strategy) ──────────
     "director": [
@@ -93,20 +94,23 @@ CHAINS = {
         "google/gemini-2.5-flash",
     ],
 
-    # ── JUNIOR TIER (DeepSeek/Gemini — cheap, bulk content) ───────────────
+    # ── MARKETING EXECUTION TIER (Sonnet OAuth first, cloud fallbacks) ─────
     "default": [
+        "local:/root/claude-delegate.sh",
         "deepseek/deepseek-chat",
         "google/gemini-2.5-flash",               # $1.25/M fallback
         "meta-llama/llama-3.3-70b-instruct:free",
     ],
     "french": [
-        "google/gemini-2.5-flash",
+        "local:/root/claude-delegate.sh",
         "deepseek/deepseek-chat",
+        "google/gemini-2.5-flash",
         "meta-llama/llama-3.3-70b-instruct:free",
     ],
     "speed": [
-        "google/gemini-2.5-flash",
+        "local:/root/claude-delegate.sh",
         "deepseek/deepseek-chat",
+        "google/gemini-2.5-flash",
         "meta-llama/llama-3.3-70b-instruct:free",
     ],
     "simple": [
@@ -305,11 +309,14 @@ class ModelRouter:
             adaptive = AdaptiveRouter()
             dna = TaskDNA(task=task, skill=skill)
             suggestion = adaptive.suggest_model(dna)
-            if suggestion:
+            if suggestion and chain_name not in DELEGATE_FIRST_CHAINS:
                 model_id, avg_quality = suggestion
                 if model_id not in _DEAD_MODELS and self._session_failures.get(model_id, 0) < 2:
                     _log(f"  ADAPTIVE: {model_id} (quality={avg_quality:.1f}, data-driven)")
                     return model_id
+            elif suggestion:
+                model_id, avg_quality = suggestion
+                _log(f"  ADAPTIVE_SKIPPED: {model_id} (quality={avg_quality:.1f}) because {chain_name} is delegate-first")
         except Exception:
             pass
 

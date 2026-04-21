@@ -26,13 +26,27 @@ Usage:
 
 import json
 import os
+import re
+import sys as _sys
 import time
 import urllib.request
 import urllib.error
 from dataclasses import dataclass
 from pathlib import Path
-from subprocess import run as sp_run, TimeoutExpired, PIPE
+from subprocess import run as sp_run, TimeoutExpired
 from typing import Optional
+
+# Circuit breaker for outbound model API calls (OpenRouter). Without this,
+# a degraded provider will hammer the executor for every task and drain
+# budget. The breaker opens after `fail_threshold` failures in a rolling
+# window and short-circuits subsequent calls until `open_secs` elapses.
+_LIB_DIR = Path(__file__).resolve().parent / "lib"
+if str(_LIB_DIR) not in _sys.path:
+    _sys.path.insert(0, str(_LIB_DIR))
+try:
+    from circuit_breaker import CircuitBreaker as _CircuitBreaker  # type: ignore
+except Exception:  # pragma: no cover - defensive fallback
+    _CircuitBreaker = None  # type: ignore[assignment]
 
 # -- Configuration ------------------------------------------------------
 DEFAULT_TIMEOUT = 180  # seconds
@@ -60,6 +74,58 @@ def estimate_tokens_from_chars(char_count: int) -> int:
     return max(1, char_count // 4)
 
 ENV_PATH = Path('/root/.hermes/.env')
+
+PIPELINE_HEADER_FIELDS = (
+    'Model',
+    'Department',
+    'Skill',
+    'Persona',
+    'Language',
+    'Pipeline Stage',
+    'Output Path',
+)
+PERMISSION_PROMPT_PATTERNS = (
+    r'requires your approval',
+    r'permission to write',
+    r'approve this (?:write|change|edit)',
+)
+
+
+def looks_like_permission_prompt(output: str) -> bool:
+    """Detect delegate CLI permission prompts before they become deliverables."""
+    lowered = output.lower()
+    return any(re.search(pattern, lowered) for pattern in PERMISSION_PROMPT_PATTERNS)
+
+
+def prompt_header_metadata(prompt: str) -> dict:
+    """Extract concrete pipeline header values from the assembled prompt."""
+    metadata = {}
+    for field in PIPELINE_HEADER_FIELDS:
+        match = re.search(rf"^##\s*{re.escape(field)}:\s*(.+?)\s*$", prompt, re.MULTILINE)
+        if match:
+            value = match.group(1).strip()
+            if value and not value.startswith("["):
+                metadata[field] = value
+    return metadata
+
+
+def ensure_pipeline_headers(output: str, prompt: str) -> str:
+    """Prepend missing deterministic pipeline metadata headers.
+
+    Delegates sometimes omit `## Skill:` or `## Pipeline Stage:` even when the
+    assembled prompt requests them. Quality score stays model-authored; only
+    deterministic metadata from the prompt is repaired here.
+    """
+    missing = []
+    metadata = prompt_header_metadata(prompt)
+    for field in PIPELINE_HEADER_FIELDS:
+        if field not in metadata:
+            continue
+        if not re.search(rf"^##\s*{re.escape(field)}:", output, re.MULTILINE):
+            missing.append(f"## {field}: {metadata[field]}")
+    if not missing:
+        return output
+    return "\n".join(missing) + "\n\n" + output.lstrip()
 
 
 # -- Safe Secret Loader (replaces bash grep pipeline) -------------------
@@ -171,6 +237,14 @@ class LocalDelegateExecutor:
                 )
 
             output = proc.stdout
+            if looks_like_permission_prompt(output):
+                return ExecutorResult(
+                    success=False, output_path=None,
+                    output_size_bytes=len(output.encode()),
+                    duration_ms=duration_ms, input_tokens=0, output_tokens=0,
+                    estimated_cost_usd=0.0,
+                    error='Delegate returned permission prompt instead of deliverable',
+                )
             if len(output) < MIN_OUTPUT_CHARS:
                 return ExecutorResult(
                     success=False, output_path=None,
@@ -181,6 +255,7 @@ class LocalDelegateExecutor:
                 )
 
             # Write output to file
+            output = ensure_pipeline_headers(output, prompt)
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
             Path(output_path).write_text(output, encoding='utf-8')
 
@@ -255,6 +330,25 @@ class OpenRouterExecutor:
         req.add_header('Content-Type', 'application/json')
         req.add_header('HTTP-Referer', 'https://cochalet.co')
 
+        # Circuit breaker pre-check: refuse to call a known-degraded provider.
+        # We key the breaker off the full OpenRouter `model_id` so each
+        # underlying model opens independently (one flaky gemini endpoint
+        # doesn't block sonnet).
+        breaker = None
+        if _CircuitBreaker is not None:
+            try:
+                breaker = _CircuitBreaker(service_name=f"openrouter:{self.model_id}")
+            except Exception:  # pragma: no cover - defensive
+                breaker = None
+        if breaker is not None and breaker.is_open():
+            wait = breaker.wait_time()
+            return ExecutorResult(
+                success=False, output_path=None, output_size_bytes=0,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
+                error=f'circuit_open: {self.model_id} blocked for ~{wait}s',
+            )
+
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 duration_ms = int((time.monotonic() - start) * 1000)
@@ -265,7 +359,29 @@ class OpenRouterExecutor:
             input_tokens = usage.get('prompt_tokens', 0)
             output_tokens = usage.get('completion_tokens', 0)
 
+            if looks_like_permission_prompt(content):
+                if breaker is not None:
+                    try:
+                        breaker.record_failure()
+                    except Exception:  # pragma: no cover - defensive
+                        pass
+                return ExecutorResult(
+                    success=False, output_path=None,
+                    output_size_bytes=len(content.encode()),
+                    duration_ms=duration_ms, input_tokens=input_tokens,
+                    output_tokens=output_tokens, estimated_cost_usd=0.0,
+                    error='Model returned permission prompt instead of deliverable',
+                )
+
             if len(content) < MIN_OUTPUT_CHARS:
+                # Treat "too short" as a soft failure for the breaker: these
+                # often signal a degraded upstream that returns tokens-but-no-
+                # useful-output (rate limit partials, safety trims, etc.).
+                if breaker is not None:
+                    try:
+                        breaker.record_failure()
+                    except Exception:  # pragma: no cover - defensive
+                        pass
                 return ExecutorResult(
                     success=False, output_path=None,
                     output_size_bytes=len(content.encode()),
@@ -277,8 +393,15 @@ class OpenRouterExecutor:
                 )
 
             # Write to file
+            content = ensure_pipeline_headers(content, prompt)
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
             Path(output_path).write_text(content, encoding='utf-8')
+
+            if breaker is not None:
+                try:
+                    breaker.record_success()
+                except Exception:  # pragma: no cover - defensive
+                    pass
 
             return ExecutorResult(
                 success=True,
@@ -293,6 +416,11 @@ class OpenRouterExecutor:
 
         except urllib.error.URLError as e:
             duration_ms = int((time.monotonic() - start) * 1000)
+            if breaker is not None:
+                try:
+                    breaker.record_failure()
+                except Exception:  # pragma: no cover - defensive
+                    pass
             return ExecutorResult(
                 success=False, output_path=None, output_size_bytes=0,
                 duration_ms=duration_ms, input_tokens=0, output_tokens=0,
@@ -301,6 +429,11 @@ class OpenRouterExecutor:
             )
         except Exception as e:
             duration_ms = int((time.monotonic() - start) * 1000)
+            if breaker is not None:
+                try:
+                    breaker.record_failure()
+                except Exception:  # pragma: no cover - defensive
+                    pass
             return ExecutorResult(
                 success=False, output_path=None, output_size_bytes=0,
                 duration_ms=duration_ms, input_tokens=0, output_tokens=0,
@@ -315,9 +448,9 @@ class ExecutorFactory:
 
     # Per-model timeout optimization (A2)
     MODEL_TIMEOUTS = {
-        "opus": 300,      # Opus is thorough, needs time
+        "opus": 900,      # Opus is thorough, needs time
         "sonnet": 300,    # Sonnet also thorough for quality tasks
-        "claude": 300,    # Claude delegate = Sonnet
+        "claude": 600,    # Claude delegate = Sonnet
         "codex": 180,     # Codex is faster
         "gemini": 120,    # Gemini Flash is fast
         "deepseek": 180,  # DeepSeek moderate
@@ -352,3 +485,18 @@ if __name__ == '__main__':
         print(f'  {model} -> {type(ex).__name__}')
     print('load_secret test:', 'OK' if load_secret('OPENROUTER_API_KEY') else 'NOT FOUND')
     print('EXECUTOR MODULE READY')
+
+
+# -- Timeout Regression Guard (P0.3) -------------------------------------
+# Loud-fail if MODEL_TIMEOUTS ever reverts (e.g. via rclone overwrite).
+# Set HERMES_DISABLE_TIMEOUT_SELF_CHECK=1 to bypass in test harnesses only.
+import os as _os
+EXPECTED_MODEL_TIMEOUTS = {"opus": 900, "claude": 600}
+if not _os.environ.get("HERMES_DISABLE_TIMEOUT_SELF_CHECK"):
+    for _model, _expected in EXPECTED_MODEL_TIMEOUTS.items():
+        _actual = ExecutorFactory.MODEL_TIMEOUTS.get(_model)
+        if _actual != _expected:
+            raise RuntimeError(
+                f"executor.py timeout regression detected for {_model}: "
+                f"expected {_expected}, got {_actual}"
+            )
