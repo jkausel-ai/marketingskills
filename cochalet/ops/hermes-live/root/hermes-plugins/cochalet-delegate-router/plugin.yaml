@@ -1,0 +1,15 @@
+name: cochalet-delegate-router
+version: 1.0.0
+description: Direct OAuth delegate commands for CoChalet review swarms.
+author: justin@cochalet.co
+requires_python: ">=3.11"
+commands:
+  - /sonnet-swarm
+  - /swarm
+  - /swarm-status
+  - /swarm-latest
+  - /swarm-help
+  - /swarm-brief
+  - /swarm-backlog
+  - /swarm-compliance
+  - /swarm-section
